@@ -49,7 +49,7 @@
 
 ---
 
-## Member 3:
+## Member 3: Leomarc
 **Role:** CPU Tick System & Scheduling Logic  
 
 ### Responsibilities
