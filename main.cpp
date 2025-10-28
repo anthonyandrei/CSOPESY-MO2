@@ -1,11 +1,11 @@
+#include "config.h"
+#include "scheduler.h"
 #include <iostream>
 #include <string>
 #include <sstream>
 #include <utility>
 #include <fstream>
 #include <cstdint>
-
-//adding for task 3 - leomarc
 #include <thread>
 #include <atomic>
 #include <vector>
@@ -14,7 +14,6 @@
 #include <mutex>
 #include <cstdlib>
 #include <ctime>
-#include "scheduler.h" 
 
 using namespace std;
 
@@ -40,7 +39,11 @@ void showGreeting() {
     cout << "          CSOPESY OS Emulator        \n";
     cout << "=====================================\n";
     cout << "Welcome to CSOPESY Emulator!\n";
-    cout << "Developers: [names]\n";
+    cout << "Developers:\n";
+    cout << "Alonzo, John Leomarc\n";
+    cout << "Labarrete, Lance\n";
+    cout << "Soan, Brent Jan\n";
+    cout << "Tan, Anthony Andrei C.\n";
     cout << "Last updated: [date]\n";
     cout << "-------------------------------------\n";
     cout << "Type 'initialize' to start, or 'exit' to quit.\n\n";
@@ -146,6 +149,9 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         }
         isInitialized = true;
         cout << "Configuration loaded successfully." << endl;
+        // Seed random numbers before starting scheduler thread to avoid race condition
+        srand(static_cast<unsigned int>(time(nullptr)));
+        start_scheduler_thread(); // start background thread -lmrc
     }
     else if (command == "screen") {
         if (verboseMode)
@@ -162,15 +168,11 @@ void handleCommand(const string command, const string param, bool& isRunning) {
     }
     else if (command == "scheduler-start") {
         if (verboseMode) cout << "[DEBUG] Starting scheduler..." << endl;
-        // TODO: link to scheduler module
-        //done
         start_process_generation();
         cout << "Process generation started." << endl;
     }
     else if (command == "scheduler-stop") {
         if (verboseMode) cout << "[DEBUG] Stopping scheduler..." << endl;
-        // TODO: link to scheduler stop
-        //done
         stop_process_generation();
         cout << "Process generation stopped." << endl;
     }
@@ -187,9 +189,7 @@ int main() {
     bool isRunning = true;
     string input;
 
-    srand(static_cast<unsigned int>(time(nullptr))); // seed random numbers
-    // if we dont do this the randomness isn't true random if ran on the same system (?)
-    start_scheduler_thread(); // start background thread -lmrc
+    // srand moved to initialization block to avoid race condition
 
     showGreeting();
 

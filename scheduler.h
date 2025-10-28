@@ -1,24 +1,13 @@
 #pragma once
-
+#include "config.h"
 #include <string>
 #include <list>
 #include <vector>
 #include <atomic>
-#include <cstdint>
 #include <optional>
 #include <mutex>
 
 // main and scheduler will use the struct from here instead
-struct Config {
-    int numCPU = 0;
-    std::string scheduler;
-    uint32_t quantumCycles = 0;
-    uint32_t batchProcessFreq = 0;
-    uint32_t minIns = 0;
-    uint32_t maxIns = 0;
-    uint32_t delaysPerExec = 0;
-};
-
 enum class ProcessState {
     READY,
     RUNNING,

@@ -1,8 +1,9 @@
 #include "scheduler.h"
+#include "config.h"
 #include <thread>
 #include <chrono>
-#include <iostream> 
-#include <random>//random insturnction counts
+#include <iostream>
+#include <random>
 
 extern Config config;
 extern bool isInitialized;
