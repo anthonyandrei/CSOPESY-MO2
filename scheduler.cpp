@@ -108,8 +108,15 @@ void execute_cpu_tick() {
 
             Process& p = *cpu_cores[i];
 
+            execute_instruction(p, current_tick);
+            if (p.state == ProcessState::FINISHED || p.state == ProcessState::SLEEPING) {
+                cpu_cores[i].reset();
+                continue;
+            }
+
             //this should be mainly for task 2
             // just simulating a sleep instruction. sampling an instruction to sleep 30 every 50
+            /*
             p.current_instruction++;
 
             if (p.current_instruction % 50 == 0 && p.current_instruction > 0 && p.current_instruction < p.total_instructions) {
@@ -127,7 +134,7 @@ void execute_cpu_tick() {
                 finished_queue.push_back(std::move(p));
                 cpu_cores[i].reset();
                 continue;
-            }
+            } */
 
             //checks if it's round robin
             if (config.scheduler == "rr") {
@@ -142,6 +149,47 @@ void execute_cpu_tick() {
         }
     }
 }
+
+void execute_instruction(Process& p, uint64_t current_tick) {
+    if (p.current_instruction >= p.instructions.size()) {
+        if (verboseMode) std::cout << "\n[Scheduler] Process " << p.name << " FINISHED." << std::endl;
+        p.state = ProcessState::FINISHED;
+        finished_queue.push_back(std::move(p));
+        return;
+    }
+
+    Instruction& ins = p.instructions[p.current_instruction];
+
+    if (ins.op == "PRINT") {
+        std::cout << "[" << p.name << "] " << ins.args[0] << std::endl;
+    }
+    else if (ins.op == "DECLARE") {
+        p.memory[ins.args[0]] = std::stoi(ins.args[1]);
+    }
+    else if (ins.op == "ADD") {
+        p.memory[ins.args[0]] += std::stoi(ins.args[1]);
+    }
+    else if (ins.op == "SUBTRACT") {
+        p.memory[ins.args[0]] -= std::stoi(ins.args[1]);
+    }
+    else if (ins.op == "SLEEP") {
+        p.state = ProcessState::SLEEPING;
+        p.sleep_until_tick = current_tick + std::stoi(ins.args[0]);
+        sleeping_queue.push_back(std::move(p));
+        return;
+    }
+    else if (ins.op == "FOR") {
+        int count = std::stoi(ins.args[0]);
+        if (p.current_instruction + 1 < p.instructions.size()) {
+            Instruction nextIns = p.instructions[p.current_instruction+1];
+            for (int i = 0; i < count-1; i++) {
+                p.instructions.insert(p.instructions.begin() + p.current_instruction + 1, nextIns);
+            }
+        }
+    }
+
+    p.current_instruction++;
+};
 
 
 void scheduler_loop() {

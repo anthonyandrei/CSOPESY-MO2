@@ -154,6 +154,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         start_scheduler_thread(); // start background thread -lmrc
     }
     else if (command == "screen") {
+        /*
         if (verboseMode)
             cout << "[DEBUG] Command "<< command <<" received with param: " << param << endl;
         // TODO: implement screen logic
@@ -165,6 +166,62 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         } else if (subcommand == "-ls") {
             if (verboseMode) cout << "[DEBUG] -ls subcommand with param: " << subparam << endl;
         }
+            */
+
+        
+        auto [subcommand, subparam] = parseCommand(param);
+
+        // Commands for screen-s, screen-r and screen-ls
+        if (subcommand == "-s") {
+        Process newP(next_process_id++, subparam, 5);
+        newP.instructions = {
+            {"DECLARE", {"x","10"}},
+            {"ADD", {"x","5"}},
+            {"PRINT", {"Hello from " + subparam}},
+            {"SUBTRACT", {"x","3"}},
+            {"PRINT", {"Done!"}}
+        };
+
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        ready_queue.push_back(std::move(newP));
+        std::cout << "New process " << subparam << " created.\n";
+        }
+
+        else if (subcommand == "-r") {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        for (auto& proc : ready_queue) {
+            if (proc.name == subparam) {
+                std::cout << "Attached to " << subparam << std::endl;
+
+                // mini REPL
+                std::string cmd;
+                while (true) {
+                    std::cout << subparam << "> ";
+                    getline(std::cin, cmd);
+
+                    if (cmd == "process-smi") {
+                        std::cout << "Process " << proc.name << " (state=" << (int)proc.state << ")\n";
+                        for (auto& kv : proc.memory)
+                            std::cout << kv.first << "=" << kv.second << "\n";
+                    }
+                    else if (cmd == "exit") {
+                        std::cout << "Returning to main menu...\n";
+                        break;
+                    }
+                    }
+                    break;
+                }
+            }
+        }
+
+        else if (subcommand == "-ls") {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        std::cout << "Processes:\n";
+        for (auto& p : ready_queue) std::cout << p.name << " [READY]\n";
+        for (auto& p : sleeping_queue) std::cout << p.name << " [SLEEPING]\n";
+        for (auto& p : finished_queue) std::cout << p.name << " [FINISHED]\n";
+        }
+        
     }
     else if (command == "scheduler-start") {
         if (verboseMode) cout << "[DEBUG] Starting scheduler..." << endl;

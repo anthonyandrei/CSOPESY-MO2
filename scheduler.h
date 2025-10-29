@@ -6,6 +6,7 @@
 #include <atomic>
 #include <optional>
 #include <mutex>
+#include <unordered_map>
 
 // main and scheduler will use the struct from here instead
 enum class ProcessState {
@@ -13,6 +14,11 @@ enum class ProcessState {
     RUNNING,
     SLEEPING,
     FINISHED
+};
+
+struct Instruction {
+    std::string op;  //PRINT, DECLARE, ADD
+    std::vector<std::string> args;  //operands
 };
 
 struct Process {
@@ -23,6 +29,9 @@ struct Process {
     uint32_t total_instructions;
     uint32_t current_instruction;
     uint32_t quantum_ticks_left;
+
+    std::vector<Instruction> instructions;        // instruction list
+    std::unordered_map<std::string,int> memory;  // process memory
 
     Process(int pid, std::string pname, uint32_t total_ins)
         : id(pid), name(std::move(pname)), state(ProcessState::READY),
@@ -50,3 +59,5 @@ extern std::vector<std::optional<Process>> cpu_cores;
 void start_scheduler_thread();
 void start_process_generation();
 void stop_process_generation();
+
+void execute_instruction(Process& p, uint64_t current_tick);
