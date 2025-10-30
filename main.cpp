@@ -17,18 +17,6 @@
 
 using namespace std;
 
-/* we get it from scheduler h
-not fully deleting in case i break it?  -lmrc
-struct Config {
-    int numCPU = 0;
-    string scheduler;
-    uint32_t quantumCycles = 0;
-    uint32_t batchProcessFreq = 0;
-    uint32_t minIns = 0;
-    uint32_t maxIns = 0;
-    uint32_t delaysPerExec = 0;
-};*/
-
 Config config;
 bool isInitialized = false;
 bool verboseMode = true;
