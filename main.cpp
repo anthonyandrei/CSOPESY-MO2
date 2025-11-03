@@ -252,7 +252,6 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         // screen -s <name>: Create new process manually
         if (subcommand == "-s") {
             Process newP(next_process_id++, subparam, 5);
-            // TODO (Member 2): Replace hardcoded instructions with random generation
             // per specs pg. 3 (instruction count from config min-ins/max-ins range)
             // Note: PRINT msg should be "Hello world from <process_name>!" per specs pg. 3 line 119
             newP.instructions = {
