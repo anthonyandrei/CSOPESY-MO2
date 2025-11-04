@@ -271,12 +271,27 @@ void execute_instruction(Process& p, uint64_t current_tick) {
         return;
     }
     else if (ins.op == "FOR") {
-        // Duplicate next instruction <count> times
-        // TODO: implement nested loop support (max 3 levels per specs pg. 3)
+        // Duplicate next instruction <count> times with nesting depth validation
         int count = std::stoi(ins.args[0]);
+        
         if (p.current_instruction + 1 < p.instructions.size()) {
-            Instruction nextIns = p.instructions[p.current_instruction+1];
-            for (int i = 0; i < count-1; i++) {
+            Instruction& nextIns = p.instructions[p.current_instruction + 1];
+            
+            // Check if next instruction is a nested FOR loop
+            if (nextIns.op == "FOR") {
+                // Validate nesting depth doesn't exceed max (3 levels per specs pg. 3)
+                if (p.for_loop_depth >= MAX_FOR_LOOP_DEPTH) {
+                    if (verboseMode)
+                        std::cout << "[" << p.name << "] ERROR: FOR loop nesting exceeds max depth of "
+                                  << MAX_FOR_LOOP_DEPTH << "\n";
+                    p.current_instruction++;
+                    return;
+                }
+                p.for_loop_depth++;
+            }
+            
+            // Duplicate the next instruction (count - 1) times
+            for (int i = 0; i < count - 1; i++) {
                 p.instructions.insert(p.instructions.begin() + p.current_instruction + 1, nextIns);
             }
         }

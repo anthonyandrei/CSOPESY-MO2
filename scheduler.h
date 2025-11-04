@@ -68,6 +68,7 @@ struct Process {
     uint32_t current_instruction;        ///< Index of next instruction to execute
     uint32_t quantum_ticks_left;         ///< Remaining time slice for RR scheduling
     uint32_t delay_ticks_left;           ///< Busy-wait delay before next instruction
+    int for_loop_depth;                  ///< Current FOR loop nesting depth (max 3)
 
     std::vector<Instruction> instructions;           ///< Instruction list
     std::unordered_map<std::string,int> memory;      ///< Variable storage (name -> value)
@@ -81,7 +82,8 @@ struct Process {
     Process(int pid, std::string pname, uint32_t total_ins)
         : id(pid), name(std::move(pname)), state(ProcessState::READY),
         sleep_until_tick(0), total_instructions(total_ins),
-        current_instruction(0), quantum_ticks_left(0), delay_ticks_left(0) {
+        current_instruction(0), quantum_ticks_left(0), delay_ticks_left(0),
+        for_loop_depth(0) {
     }
 };
 
