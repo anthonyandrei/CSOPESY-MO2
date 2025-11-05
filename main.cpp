@@ -14,6 +14,7 @@
 #include <sstream>
 #include <utility>
 #include <fstream>
+#include <iomanip>
 #include <cstdint>
 #include <thread>
 #include <atomic>
@@ -260,10 +261,10 @@ void handleCommand(const string command, const string param, bool& isRunning) {
 
         // screen -s <name>: Create new process manually
         if (subcommand == "-s") {
-            // TODO (Member 2 - Lance): Clear console contents per specs pg. 3 line 156
+            // Clear console contents per specs pg. 3
+            system("cls");
+            
             Process newP(next_process_id++, subparam, 5);
-            // per specs pg. 3 (instruction count from config min-ins/max-ins range)
-            // Note: PRINT msg should be "Hello world from <process_name>!" per specs pg. 3 line 119
             newP.instructions = {
                 {"DECLARE", {"x","10"}},
                 {"ADD", {"x","5"}},
@@ -310,7 +311,9 @@ void handleCommand(const string command, const string param, bool& isRunning) {
             }
 
             if (found && targetProc) {
-                // TODO (Member 2 - Lance): Clear console contents per specs pg. 3 line 156
+                // Clear console contents per specs pg. 3
+                system("cls");
+                
                 std::cout << "Attached to " << subparam << std::endl;
 
                 // Mini REPL inside process screen
@@ -325,7 +328,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
                         std::cout << "Current instruction line: " << targetProc->current_instruction << "\n";
                         std::cout << "Total lines of code: " << targetProc->total_instructions << "\n";
                         
-                        // Print "Finished!" if process completed (specs pg. 3 lines 17-20)
+                        // Print "Finished!" if process completed (specs pg. 3)
                         if (targetProc->state == ProcessState::FINISHED) {
                             std::cout << "Finished!\n";
                         }
@@ -348,10 +351,21 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         else if (subcommand == "-ls") {
             std::lock_guard<std::mutex> lock(queue_mutex);
             
-            // TODO (Member 4): Add CPU utilization metrics per specs pg. 4 (lines 38-54 mockup):
-            // - CPU utilization: X%
-            // - Cores used: Y
-            // - Cores available: Z
+            // Calculate CPU utilization metrics (specs pg. 4)
+            int coresUsed = 0;
+            for (auto& core : cpu_cores) {
+                if (core.has_value()) 
+                    coresUsed++;
+            }
+            int coresAvailable = cpu_cores.size() - coresUsed;
+            double cpuUtilization = (cpu_cores.size() > 0) 
+                ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
+                : 0.0;
+            
+            std::cout << "CPU utilization: " << std::fixed << std::setprecision(2) 
+                      << cpuUtilization << "%\n";
+            std::cout << "Cores used: " << coresUsed << "\n";
+            std::cout << "Cores available: " << coresAvailable << "\n\n";
             
             std::cout << "Processes:\n";
             for (auto& p : ready_queue) 
@@ -379,27 +393,41 @@ void handleCommand(const string command, const string param, bool& isRunning) {
     else if (command == "report-util") {
         if (verboseMode) cout << "[DEBUG] Generating report..." << endl;
 
+        std::lock_guard<std::mutex> lock(queue_mutex);
         std::ofstream log("csopesy-log.txt");
-        std::string logData = "";
+        std::stringstream logData;
 
-        // TODO (Member 4): Add CPU utilization metrics per specs pg. 4 (same as screen -ls):
-        // - CPU utilization: X%
-        // - Cores used: Y
-        // - Cores available: Z
+        // Calculate CPU utilization metrics (specs pg. 4 same as screen -ls)
+        int coresUsed = 0;
+        for (auto& core : cpu_cores) {
+            if (core.has_value()) coresUsed++;
+        }
+        int coresAvailable = cpu_cores.size() - coresUsed;
+        double cpuUtilization = (cpu_cores.size() > 0) 
+            ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
+            : 0.0;
         
-        logData += "Processes:\n";
+        logData << "CPU utilization: " << std::fixed << std::setprecision(2) 
+                << cpuUtilization << "%\n";
+        logData << "Cores used: " << coresUsed << "\n";
+        logData << "Cores available: " << coresAvailable << "\n\n";
+        
+        logData << "Processes:\n";
         for(auto& p : ready_queue)
-            logData += p.name + " [READY]\n";
+            logData << p.name << " [READY]\n";
         for(auto& core : cpu_cores) {
             if(core.has_value())
-                logData += core.value().name + " [RUNNING]\n";
+                logData << core.value().name << " [RUNNING]\n";
         }
         for(auto& p : sleeping_queue)
-            logData += p.name + " [SLEEPING]\n";
+            logData << p.name << " [SLEEPING]\n";
         for(auto& p : finished_queue)
-            logData += p.name + " [FINISHED]\n";
+            logData << p.name << " [FINISHED]\n";
 
-        log << logData;
+        log << logData.str();
+        log.close();
+        
+        std::cout << "Report saved to csopesy-log.txt\n";
     }
     else {
         cout << "Unknown command: " << command << endl;
