@@ -22,6 +22,12 @@ constexpr int UINT16_MAX_VALUE = 65535;                ///< Maximum value for ui
 constexpr int UINT16_MIN_VALUE = 0;                    ///< Minimum value for uint16 variables
 constexpr int MAX_FOR_LOOP_DEPTH = 3;                  ///< Maximum FOR loop nesting depth per specs pg. 3
 constexpr int NUM_INSTRUCTION_TYPES = 5;               ///< Number of instruction types (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
+constexpr int NUM_INSTRUCTION_TYPES_WITH_FOR = 6;     ///< Number of instruction types including FOR
+constexpr int FOR_LOOP_PROBABILITY = 10;              ///< 1 in N chance to generate a FOR loop
+constexpr int MIN_FOR_ITERATIONS = 2;                 ///< Minimum FOR loop iterations
+constexpr int MAX_FOR_ITERATIONS = 5;                 ///< Maximum FOR loop iterations
+constexpr int MIN_FOR_BODY_SIZE = 2;                  ///< Minimum instructions in FOR loop body
+constexpr int MAX_FOR_BODY_SIZE = 5;                  ///< Maximum instructions in FOR loop body
 constexpr int PROCESS_NAME_PADDING_THRESHOLD = 10;     ///< Process IDs below this get zero-padded (p01, p02, etc.)
 constexpr int MAX_DECLARE_VALUE = 100;                 ///< Maximum random value for DECLARE instruction (0-99)
 constexpr int MAX_ARITHMETIC_OPERAND = 50;             ///< Maximum random value for ADD/SUBTRACT operands (0-49)
@@ -82,11 +88,10 @@ int get_operand_value(const std::string& operand, Process& p) {
  * @return String containing either a variable name or numeric literal
  */
 std::string generate_random_operand(const std::vector<std::string>& var_pool, int max_literal) {
-    if (rand() % PROBABILITY_DENOMINATOR == 0) {
-        return var_pool[rand() % var_pool.size()];
-    } else {
-        return std::to_string(rand() % max_literal);
-    }
+    // 50% chance: return variable, 50% chance: return literal
+    return (rand() % 2 == 0) 
+        ? var_pool[rand() % var_pool.size()]
+        : std::to_string(rand() % max_literal);
 }
 
 /**
@@ -122,6 +127,9 @@ void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
  * Process name follows pattern: p01, p02, ..., p1240
  * New process is added to ready_queue.
  * 
+ * Can generate FOR loops with format: FOR(repeats, block_size).
+ * Respects MAX_FOR_LOOP_DEPTH nesting limit.
+ * 
  * Called by scheduler_loop() every batchProcessFreq ticks when
  * is_generating_processes is true.
  */
@@ -148,45 +156,70 @@ void generate_new_process() {
     // Create the process
     Process p(pid, pname, num_instructions);
     
-    // Generate random instructions
+    // Variable pool for instruction generation
     std::vector<std::string> var_pool = {"x", "y", "z", "counter", "sum", "temp", "result", "value"};
+    
+    // Generate instructions in a flat loop with FOR(repeats, block_size) format
+    int current_depth = 0;  // Track nesting depth for FOR loops
     
     for (uint32_t i = 0; i < num_instructions; i++) {
         Instruction ins;
         
-        // Randomly select instruction type (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
-        int instruction_type = rand() % NUM_INSTRUCTION_TYPES;
+        // 10% chance of FOR if we haven't exceeded max depth and have room for loop body
+        uint32_t remaining_instructions = num_instructions - i - 1;
+        bool can_generate_for = current_depth < MAX_FOR_LOOP_DEPTH && 
+                                remaining_instructions >= MIN_FOR_BODY_SIZE &&
+                                rand() % FOR_LOOP_PROBABILITY == 0;
         
-        switch (instruction_type) {
-            case 0: // PRINT
-                ins.op = "PRINT";
-                ins.args.push_back("Hello world from " + pname + "!");
-                break;
-                
-            case 1: // DECLARE
-                ins.op = "DECLARE";
-                ins.args.push_back(var_pool[rand() % var_pool.size()]);
-                ins.args.push_back(std::to_string(rand() % MAX_DECLARE_VALUE)); // Random value 0-99
-                break;
-                
-            case 2: // ADD (var1, var2/value, var3/value)
-                ins.op = "ADD";
-                ins.args.push_back(var_pool[rand() % var_pool.size()]); // var1
-                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
-                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
-                break;
-                
-            case 3: // SUBTRACT (var1, var2/value, var3/value)
-                ins.op = "SUBTRACT";
-                ins.args.push_back(var_pool[rand() % var_pool.size()]); // var1
-                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
-                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
-                break;
-                
-            case 4: // SLEEP
-                ins.op = "SLEEP";
-                ins.args.push_back(std::to_string(MIN_SLEEP_TICKS + (rand() % MAX_SLEEP_TICKS))); // Sleep 1-10 ticks
-                break;
+        if (can_generate_for) {
+            // Generate FOR instruction with block_size
+            ins.op = "FOR";
+            
+            // Random iteration count
+            int iterations = MIN_FOR_ITERATIONS + (rand() % (MAX_FOR_ITERATIONS - MIN_FOR_ITERATIONS + 1));
+            ins.args.push_back(std::to_string(iterations));
+            
+            // Random block size (clamped to remaining instructions)
+            int max_block = std::min(static_cast<int>(remaining_instructions), MAX_FOR_BODY_SIZE);
+            int block_size = MIN_FOR_BODY_SIZE + (rand() % (max_block - MIN_FOR_BODY_SIZE + 1));
+            ins.args.push_back(std::to_string(block_size));
+            
+            current_depth++;
+        } else {
+            // Generate regular instruction (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
+            int instruction_type = rand() % NUM_INSTRUCTION_TYPES;
+            
+            switch (instruction_type) {
+                case 0: // PRINT
+                    ins.op = "PRINT";
+                    // No args = use default message in execute_instruction
+                    break;
+                    
+                case 1: // DECLARE
+                    ins.op = "DECLARE";
+                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
+                    ins.args.push_back(std::to_string(rand() % MAX_DECLARE_VALUE));
+                    break;
+                    
+                case 2: // ADD
+                    ins.op = "ADD";
+                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
+                    ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                    ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                    break;
+                    
+                case 3: // SUBTRACT
+                    ins.op = "SUBTRACT";
+                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
+                    ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                    ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                    break;
+                    
+                case 4: // SLEEP
+                    ins.op = "SLEEP";
+                    ins.args.push_back(std::to_string(MIN_SLEEP_TICKS + (rand() % MAX_SLEEP_TICKS)));
+                    break;
+            }
         }
         
         p.instructions.push_back(ins);
@@ -365,8 +398,10 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     // Execute instruction based on operation
     if (ins.op == "PRINT") {
         // PRINT instruction can handle variable concatenation: PRINT ("Value from: " +x)
-        // Parse the message and replace variables with their values
-        std::string message = ins.args[0];
+        // If no argument provided, use default message
+        std::string message = ins.args.empty() 
+            ? "Hello world from " + p.name + "!" 
+            : ins.args[0];
         size_t pos = 0;
         
         // Look for pattern: +varname (variable concatenation)
@@ -420,34 +455,73 @@ void execute_instruction(Process& p, uint64_t current_tick) {
         return;
     }
     else if (ins.op == "FOR") {
-        // Duplicate next instruction <count> times with nesting depth validation
-        int count = std::stoi(ins.args[0]);
+        // FOR loop: Execute a block of instructions multiple times
+        // Format: FOR <iterations> <block_size>
         
-        if (p.current_instruction + 1 < p.instructions.size()) {
-            Instruction& nextIns = p.instructions[p.current_instruction + 1];
-            
-            // Check if next instruction is a nested FOR loop
-            if (nextIns.op == "FOR") {
-                // Validate nesting depth doesn't exceed max (3 levels per specs pg. 3)
-                if (p.for_loop_depth >= MAX_FOR_LOOP_DEPTH) {
-                    if (verboseMode)
-                        std::cout << "[" << p.name << "] ERROR: FOR loop nesting exceeds max depth of "
-                                  << MAX_FOR_LOOP_DEPTH << "\n";
-                    p.current_instruction++;
-                    return;
-                }
-                p.for_loop_depth++;
-            }
-            
-            // Duplicate the next instruction (count - 1) times
-            for (int i = 0; i < count - 1; i++) {
-                p.instructions.insert(p.instructions.begin() + p.current_instruction + 1, nextIns);
-            }
+        if (ins.args.size() < 2) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: FOR requires 2 arguments (iterations, block_size)\n";
+            p.current_instruction++;
+            return;
         }
+        
+        int iterations = std::stoi(ins.args[0]);
+        int block_size = std::stoi(ins.args[1]);
+        
+        // Check nesting depth limit
+        if (p.loop_stack.size() >= MAX_FOR_LOOP_DEPTH) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: FOR loop nesting exceeds max depth of "
+                          << MAX_FOR_LOOP_DEPTH << "\n";
+            p.current_instruction++;
+            return;
+        }
+        
+        // Validate block size
+        uint32_t loop_start = p.current_instruction + 1;
+        uint32_t loop_end = p.current_instruction + block_size;
+        
+        if (loop_start >= p.instructions.size() || loop_end > p.instructions.size()) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: FOR loop block_size exceeds instruction bounds\n";
+            p.current_instruction++;
+            return;
+        }
+        
+        // Push loop frame onto stack
+        LoopStruct frame;
+        frame.loop_start = loop_start;
+        frame.loop_end = loop_end;
+        frame.iterations_remaining = iterations - 1;  // -1 because first iteration starts now
+        p.loop_stack.push_back(frame);
+        
+        // Jump to loop body start
+        p.current_instruction = loop_start;
+        
+        // Reset delay for loop body execution
+        p.delay_ticks_left = config.delaysPerExec;
+        return;  // Don't increment instruction counter (we already set it)
     }
 
     // Move to next instruction
     p.current_instruction++;
+    
+    // Check if we've reached the end of a FOR loop body
+    if (!p.loop_stack.empty()) {
+        LoopStruct& frame = p.loop_stack.back();
+        
+        if (p.current_instruction > frame.loop_end) {
+            // We've finished one iteration of the loop body
+            if (frame.iterations_remaining > 0) {
+                // More iterations needed - jump back to loop start
+                frame.iterations_remaining--;
+                p.current_instruction = frame.loop_start;
+            } else {
+                // Loop finished - pop frame and continue
+                p.loop_stack.pop_back();
+            }
+        }
+    }
     
     // Reset delay counter for next instruction (busy-wait per spec pg. 4)
     p.delay_ticks_left = config.delaysPerExec;

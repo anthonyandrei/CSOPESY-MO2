@@ -45,11 +45,21 @@ enum class ProcessState {
  * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
  * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
  * - SLEEP <ticks>
- * - FOR <count>
+ * - FOR <iterations> <block_size>: Loop over next block_size instructions
  */
 struct Instruction {
     std::string op;                      ///< Operation name (PRINT, DECLARE, etc.)
     std::vector<std::string> args;       ///< Operands (variable names, values, messages)
+};
+
+/**
+ * @struct LoopStruct
+ * @brief Tracks state of a single FOR loop iteration
+ */
+struct LoopStruct {
+    uint32_t loop_start;        ///< Instruction index where loop body starts
+    uint32_t loop_end;          ///< Instruction index where loop body ends
+    int iterations_remaining;   ///< How many more times to execute the loop
 };
 
 /**
@@ -68,10 +78,10 @@ struct Process {
     uint32_t current_instruction;        ///< Index of next instruction to execute
     uint32_t quantum_ticks_left;         ///< Remaining time slice for RR scheduling
     uint32_t delay_ticks_left;           ///< Busy-wait delay before next instruction
-    int for_loop_depth;                  ///< Current FOR loop nesting depth (max 3)
 
     std::vector<Instruction> instructions;           ///< Instruction list
     std::unordered_map<std::string,int> memory;      ///< Variable storage (name -> value)
+    std::vector<LoopStruct> loop_stack;               ///< Active FOR loop stack (for nesting)
 
     /**
      * @brief Construct a new Process
@@ -82,8 +92,7 @@ struct Process {
     Process(int pid, std::string pname, uint32_t total_ins)
         : id(pid), name(std::move(pname)), state(ProcessState::READY),
         sleep_until_tick(0), total_instructions(total_ins),
-        current_instruction(0), quantum_ticks_left(0), delay_ticks_left(0),
-        for_loop_depth(0) {
+        current_instruction(0), quantum_ticks_left(0), delay_ticks_left(0) {
     }
 };
 

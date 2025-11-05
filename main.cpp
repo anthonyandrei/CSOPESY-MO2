@@ -328,14 +328,18 @@ void handleCommand(const string command, const string param, bool& isRunning) {
             // Clear console contents per specs pg. 3
             system("cls");
             
-            Process newP(next_process_id++, subparam, 6);
+            Process newP(next_process_id++, subparam, 10);
             newP.instructions = {
                 {"DECLARE", {"x","10"}},
                 {"DECLARE", {"y","5"}},
-                {"ADD", {"x","x","y"}},           // x = x + y (10 + 5 = 15)
-                {"PRINT", {"Hello world from " + subparam + "!"}},
-                {"SUBTRACT", {"x","x","3"}},      // x = x - 3 (15 - 3 = 12)
-                {"PRINT", {"Hello world from " + subparam + "!"}}
+                {"DECLARE", {"counter","0"}},
+                {"FOR", {"3", "3"}},              // Loop 3 times over next 3 instructions
+                {"ADD", {"x","x","y"}},           // x = x + y
+                {"ADD", {"counter","counter","1"}},  // counter++
+                {"PRINT", {"Iteration: +counter, x = +x"}},
+                {"SUBTRACT", {"x","x","3"}},      // After loop: x = x - 3
+                {"PRINT", {"Final: x = +x, counter = +counter"}},
+                {"PRINT", {}}                      // Default message: "Hello world from [process]!"
             };
 
             std::lock_guard<std::mutex> lock(queue_mutex);
