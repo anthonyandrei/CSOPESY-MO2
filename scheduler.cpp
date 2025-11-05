@@ -54,6 +54,64 @@ std::vector<std::optional<Process>> cpu_cores;         ///< Per-core running pro
 // ============================================================================
 
 /**
+ * @brief Generate random integer in range [min, max] inclusive
+ */
+int random_in_range(int min, int max) {
+    return min + (rand() % (max - min + 1));
+}
+
+/**
+ * @brief Generate process name with zero-padding (e.g., p01, p02, ..., p10, p11)
+ */
+std::string generate_process_name(int pid) {
+    std::string padding = (pid < PROCESS_NAME_PADDING_THRESHOLD) ? "0" : "";
+    return "p" + padding + std::to_string(pid);
+}
+
+/**
+ * @brief Process PRINT message with variable concatenation
+ * @param message Template message with +varname patterns
+ * @param p Process with memory context
+ * @return Processed message with variables replaced by their values
+ * 
+ * Replaces patterns like "+x" with the value of variable x.
+ * Auto-initializes undeclared variables to 0.
+ */
+std::string process_print_message(std::string message, Process& p) {
+    size_t pos = 0;
+    
+    // Look for pattern: +varname (variable concatenation)
+    while ((pos = message.find('+', pos)) != std::string::npos) {
+        // Extract variable name after '+'
+        size_t varStart = pos + 1;
+        size_t varEnd = varStart;
+        
+        // Find the end of the variable name (alphanumeric + underscore)
+        while (varEnd < message.length() && 
+               (std::isalnum(message[varEnd]) || message[varEnd] == '_')) {
+            varEnd++;
+        }
+        
+        if (varEnd > varStart) {
+            std::string varName = message.substr(varStart, varEnd - varStart);
+            
+            // Get variable value (auto-initialize to 0 if not declared)
+            if (p.memory.find(varName) == p.memory.end()) {
+                p.memory[varName] = 0;  // Auto-declare as per specs pg. 3
+            }
+            int varValue = p.memory[varName];
+            
+            // Replace +varName with the variable value
+            message.replace(pos, varEnd - pos, std::to_string(varValue));
+        }
+        
+        pos++;
+    }
+    
+    return message;
+}
+
+/**
  * @brief Clamp integer value to uint16 range [0, 65535]
  */
 int clamp_to_uint16(int value) {
@@ -139,14 +197,13 @@ void generate_new_process() {
     uint32_t max_ins = config.maxIns;
 
     // Generate random instruction count in [min_ins, max_ins]
-    uint32_t num_instructions = min_ins;
-    if (max_ins > min_ins) {
-        num_instructions = (rand() % (max_ins - min_ins + 1)) + min_ins;
-    }
+    uint32_t num_instructions = (max_ins > min_ins) 
+        ? random_in_range(min_ins, max_ins)
+        : min_ins;
 
     // Generate process name (p01, p02, ...)
     int pid = next_process_id++;
-    std::string pname = "p" + std::string(pid < PROCESS_NAME_PADDING_THRESHOLD ? "0" : "") + std::to_string(pid);
+    std::string pname = generate_process_name(pid);
 
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
@@ -160,15 +217,12 @@ void generate_new_process() {
     std::vector<std::string> var_pool = {"x", "y", "z", "counter", "sum", "temp", "result", "value"};
     
     // Generate instructions in a flat loop with FOR(repeats, block_size) format
-    int current_depth = 0;  // Track nesting depth for FOR loops
-    
     for (uint32_t i = 0; i < num_instructions; i++) {
         Instruction ins;
         
-        // 10% chance of FOR if we haven't exceeded max depth and have room for loop body
+        // 10% chance of FOR if we have room for loop body
         uint32_t remaining_instructions = num_instructions - i - 1;
-        bool can_generate_for = current_depth < MAX_FOR_LOOP_DEPTH && 
-                                remaining_instructions >= MIN_FOR_BODY_SIZE &&
+        bool can_generate_for = remaining_instructions >= MIN_FOR_BODY_SIZE &&
                                 rand() % FOR_LOOP_PROBABILITY == 0;
         
         if (can_generate_for) {
@@ -176,15 +230,13 @@ void generate_new_process() {
             ins.op = "FOR";
             
             // Random iteration count
-            int iterations = MIN_FOR_ITERATIONS + (rand() % (MAX_FOR_ITERATIONS - MIN_FOR_ITERATIONS + 1));
+            int iterations = random_in_range(MIN_FOR_ITERATIONS, MAX_FOR_ITERATIONS);
             ins.args.push_back(std::to_string(iterations));
             
             // Random block size (clamped to remaining instructions)
             int max_block = std::min(static_cast<int>(remaining_instructions), MAX_FOR_BODY_SIZE);
-            int block_size = MIN_FOR_BODY_SIZE + (rand() % (max_block - MIN_FOR_BODY_SIZE + 1));
+            int block_size = random_in_range(MIN_FOR_BODY_SIZE, max_block);
             ins.args.push_back(std::to_string(block_size));
-            
-            current_depth++;
         } else {
             // Generate regular instruction (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
             int instruction_type = rand() % NUM_INSTRUCTION_TYPES;
@@ -217,7 +269,7 @@ void generate_new_process() {
                     
                 case 4: // SLEEP
                     ins.op = "SLEEP";
-                    ins.args.push_back(std::to_string(MIN_SLEEP_TICKS + (rand() % MAX_SLEEP_TICKS)));
+                    ins.args.push_back(std::to_string(random_in_range(MIN_SLEEP_TICKS, MAX_SLEEP_TICKS)));
                     break;
             }
         }
@@ -402,38 +454,9 @@ void execute_instruction(Process& p, uint64_t current_tick) {
         std::string message = ins.args.empty() 
             ? "Hello world from " + p.name + "!" 
             : ins.args[0];
-        size_t pos = 0;
         
-        // Look for pattern: +varname (variable concatenation)
-        while ((pos = message.find('+', pos)) != std::string::npos) {
-            // Extract variable name after '+'
-            size_t varStart = pos + 1;
-            size_t varEnd = varStart;
-            
-            // Find the end of the variable name (alphanumeric + underscore)
-            while (varEnd < message.length() && 
-                   (std::isalnum(message[varEnd]) || message[varEnd] == '_')) {
-                varEnd++;
-            }
-            
-            if (varEnd > varStart) {
-                std::string varName = message.substr(varStart, varEnd - varStart);
-                
-                // Get variable value (auto-initialize to 0 if not declared)
-                int varValue = 0;
-                if (p.memory.find(varName) != p.memory.end()) {
-                    varValue = p.memory[varName];
-                } else {
-                    p.memory[varName] = 0;  // Auto-declare as per specs pg. 3
-                }
-                
-                // Replace +varName with the variable value
-                message.replace(pos, varEnd - pos, std::to_string(varValue));
-            }
-            
-            pos++;
-        }
-        
+        // Process variable concatenation (+varname patterns)
+        message = process_print_message(message, p);
         std::cout << "[" << p.name << "] " << message << std::endl;
     }
     else if (ins.op == "DECLARE") {

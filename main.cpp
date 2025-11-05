@@ -196,33 +196,33 @@ void initializeConfig(ifstream& configFile) {
     while (configFile >> key) {
         if (key == "num-cpu") {
             configFile >> config.numCPU;
-
             // Resize CPU core array (thread-safe via mutex)
             std::lock_guard<std::mutex> lock(queue_mutex);
             cpu_cores.resize(config.numCPU);
-
-        } else if (key == "scheduler") {
+        } 
+        else if (key == "scheduler") {
             configFile >> config.scheduler;
-        } else if (key == "quantum-cycles") {
+        } 
+        else if (key == "quantum-cycles") {
             configFile >> config.quantumCycles;
-        } else if (key == "batch-process-freq") {
+        } 
+        else if (key == "batch-process-freq") {
             configFile >> config.batchProcessFreq;
-        } else if (key == "min-ins") {
+        } 
+        else if (key == "min-ins") {
             configFile >> config.minIns;
-        } else if (key == "max-ins") {
+        } 
+        else if (key == "max-ins") {
             configFile >> config.maxIns;
-        } else if (key == "delays-per-exec") {
+        } 
+        else if (key == "delays-per-exec") {
             configFile >> config.delaysPerExec;
-        } else {
+        } 
+        else {
             // Skip unknown keys (consume value token and continue)
             string skip;
-            if (configFile >> skip) {
-                cout << "WARNING: Unknown key '" << key
-                     << "', skipping value '" << skip << "'" << endl;
-                continue;
-            }
-            cout << "WARNING: Unknown key '" << key << "'" << endl;
-            return;
+            configFile >> skip;
+            cout << "WARNING: Unknown key '" << key << "', skipping value '" << skip << "'" << endl;
         }
     }
 }
@@ -258,6 +258,126 @@ bool isValidConfig(const Config& config) {
 // ============================================================================
 // Command handlers
 // ============================================================================
+
+/**
+ * @brief Handle screen command with subcommands
+ * @param param The parameter string (e.g., "-s name", "-r name", "-ls")
+ * 
+ * Subcommands:
+ * - screen -s <name>: Create new process with hardcoded test instructions
+ * - screen -r <name>: Attach to process console (mini REPL)
+ * - screen -ls: List all processes with CPU utilization
+ */
+void handleScreenCommand(const string& param) {
+    auto [subcommand, subparam] = parseCommand(param);
+
+    // screen -s <name>: Create new process manually
+    if (subcommand == "-s") {
+        // Clear console contents per specs pg. 3
+        system("cls");
+        
+        Process newP(next_process_id++, subparam, 10);
+        newP.instructions = {
+            {"DECLARE", {"x","10"}},
+            {"DECLARE", {"y","5"}},
+            {"DECLARE", {"counter","0"}},
+            {"FOR", {"3", "3"}},              // Loop 3 times over next 3 instructions
+            {"ADD", {"x","x","y"}},           // x = x + y
+            {"ADD", {"counter","counter","1"}},  // counter++
+            {"PRINT", {"Iteration: +counter, x = +x"}},
+            {"SUBTRACT", {"x","x","3"}},      // After loop: x = x - 3
+            {"PRINT", {"Final: x = +x, counter = +counter"}},
+            {"PRINT", {}}                      // Default message: "Hello world from [process]!"
+        };
+
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        ready_queue.push_back(std::move(newP));
+        std::cout << "New process " << subparam << " created.\n";
+    }
+    // screen -r <name>: Attach to process console
+    else if (subcommand == "-r") {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        Process* targetProc = find_process(subparam);
+
+        if (targetProc) {
+            // Clear console contents per specs pg. 3
+            system("cls");
+            
+            std::cout << "Attached to " << subparam << std::endl;
+
+            // Mini REPL inside process screen
+            std::string cmd;
+            while (true) {
+                std::cout << subparam << "> ";
+                getline(std::cin, cmd);
+
+                if (cmd == "process-smi") {
+                    // Display process state and variables (per specs pg. 3)
+                    std::cout << "Process: " << targetProc->name << "\n";
+                    std::cout << "Current instruction line: " << targetProc->current_instruction << "\n";
+                    std::cout << "Total lines of code: " << targetProc->total_instructions << "\n";
+                    
+                    // Print "Finished!" if process completed (specs pg. 3)
+                    if (targetProc->state == ProcessState::FINISHED) {
+                        std::cout << "Finished!\n";
+                    }
+                    
+                    std::cout << "\nVariables:\n";
+                    for (auto& kv : targetProc->memory)
+                        std::cout << "  " << kv.first << " = " << kv.second << "\n";
+                }
+                else if (cmd == "exit") {
+                    std::cout << "Returning to main menu...\n";
+                    break;
+                }
+            }
+        }
+        else {
+            std::cout << "Error: Process " << subparam << " not found.\n";
+        }
+    }
+    // screen -ls: List all processes
+    else if (subcommand == "-ls") {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        
+        auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
+        
+        std::cout << "CPU utilization: " << std::fixed << std::setprecision(2) 
+                  << cpuUtilization << "%\n";
+        std::cout << "Cores used: " << coresUsed << "\n";
+        std::cout << "Cores available: " << coresAvailable << "\n\n";
+        
+        std::cout << "Processes:\n";
+        std::cout << generate_process_list();
+    }
+}
+
+/**
+ * @brief Handle report-util command
+ * 
+ * Generates CPU utilization report and saves to csopesy-log.txt.
+ * Includes cores used/available, utilization percentage, and process list.
+ */
+void handleReportUtil() {
+    if (verboseMode) cout << "[DEBUG] Generating report..." << endl;
+
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    std::ofstream log("csopesy-log.txt");
+
+    auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
+    
+    log << "CPU utilization: " << std::fixed << std::setprecision(2) 
+        << cpuUtilization << "%\n";
+    log << "Cores used: " << coresUsed << "\n";
+    log << "Cores available: " << coresAvailable << "\n\n";
+    
+    log << "Processes:\n";
+    log << generate_process_list();
+
+    log.close();
+    
+    std::cout << "Report saved to csopesy-log.txt\n";
+}
 
 /**
  * @brief Process and execute user commands
@@ -321,87 +441,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         start_scheduler_thread();
     }
     else if (command == "screen") {
-        auto [subcommand, subparam] = parseCommand(param);
-
-        // screen -s <name>: Create new process manually
-        if (subcommand == "-s") {
-            // Clear console contents per specs pg. 3
-            system("cls");
-            
-            Process newP(next_process_id++, subparam, 10);
-            newP.instructions = {
-                {"DECLARE", {"x","10"}},
-                {"DECLARE", {"y","5"}},
-                {"DECLARE", {"counter","0"}},
-                {"FOR", {"3", "3"}},              // Loop 3 times over next 3 instructions
-                {"ADD", {"x","x","y"}},           // x = x + y
-                {"ADD", {"counter","counter","1"}},  // counter++
-                {"PRINT", {"Iteration: +counter, x = +x"}},
-                {"SUBTRACT", {"x","x","3"}},      // After loop: x = x - 3
-                {"PRINT", {"Final: x = +x, counter = +counter"}},
-                {"PRINT", {}}                      // Default message: "Hello world from [process]!"
-            };
-
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            ready_queue.push_back(std::move(newP));
-            std::cout << "New process " << subparam << " created.\n";
-        }
-        // screen -r <name>: Attach to process console
-        else if (subcommand == "-r") {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            Process* targetProc = find_process(subparam);
-
-            if (targetProc) {
-                // Clear console contents per specs pg. 3
-                system("cls");
-                
-                std::cout << "Attached to " << subparam << std::endl;
-
-                // Mini REPL inside process screen
-                std::string cmd;
-                while (true) {
-                    std::cout << subparam << "> ";
-                    getline(std::cin, cmd);
-
-                    if (cmd == "process-smi") {
-                        // Display process state and variables (per specs pg. 3)
-                        std::cout << "Process: " << targetProc->name << "\n";
-                        std::cout << "Current instruction line: " << targetProc->current_instruction << "\n";
-                        std::cout << "Total lines of code: " << targetProc->total_instructions << "\n";
-                        
-                        // Print "Finished!" if process completed (specs pg. 3)
-                        if (targetProc->state == ProcessState::FINISHED) {
-                            std::cout << "Finished!\n";
-                        }
-                        
-                        std::cout << "\nVariables:\n";
-                        for (auto& kv : targetProc->memory)
-                            std::cout << "  " << kv.first << " = " << kv.second << "\n";
-                    }
-                    else if (cmd == "exit") {
-                        std::cout << "Returning to main menu...\n";
-                        break;
-                    }
-                }
-            }
-            else {
-                std::cout << "Error: Process " << subparam << " not found.\n";
-            }
-        }
-        // screen -ls: List all processes
-        else if (subcommand == "-ls") {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            
-            auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
-            
-            std::cout << "CPU utilization: " << std::fixed << std::setprecision(2) 
-                      << cpuUtilization << "%\n";
-            std::cout << "Cores used: " << coresUsed << "\n";
-            std::cout << "Cores available: " << coresAvailable << "\n\n";
-            
-            std::cout << "Processes:\n";
-            std::cout << generate_process_list();
-        }
+        handleScreenCommand(param);
     }
     else if (command == "scheduler-start") {
         if (verboseMode) cout << "[DEBUG] Starting scheduler..." << endl;
@@ -414,24 +454,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         cout << "Process generation stopped." << endl;
     }
     else if (command == "report-util") {
-        if (verboseMode) cout << "[DEBUG] Generating report..." << endl;
-
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        std::ofstream log("csopesy-log.txt");
-
-        auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
-        
-        log << "CPU utilization: " << std::fixed << std::setprecision(2) 
-            << cpuUtilization << "%\n";
-        log << "Cores used: " << coresUsed << "\n";
-        log << "Cores available: " << coresAvailable << "\n\n";
-        
-        log << "Processes:\n";
-        log << generate_process_list();
-
-        log.close();
-        
-        std::cout << "Report saved to csopesy-log.txt\n";
+        handleReportUtil();
     }
     else {
         cout << "Unknown command: " << command << endl;
