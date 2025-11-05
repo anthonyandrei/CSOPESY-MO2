@@ -44,6 +44,74 @@ std::list<Process> finished_queue;                     ///< Completed processes
 std::vector<std::optional<Process>> cpu_cores;         ///< Per-core running process
 
 // ============================================================================
+// Helper functions
+// ============================================================================
+
+/**
+ * @brief Clamp integer value to uint16 range [0, 65535]
+ */
+int clamp_to_uint16(int value) {
+    if (value < UINT16_MIN_VALUE) return UINT16_MIN_VALUE;
+    if (value > UINT16_MAX_VALUE) return UINT16_MAX_VALUE;
+    return value;
+}
+
+/**
+ * @brief Get value of an operand (variable or literal)
+ * @param operand String containing variable name or numeric literal
+ * @param p Process with memory context
+ * @return Resolved integer value
+ */
+int get_operand_value(const std::string& operand, Process& p) {
+    // Check if it's a numeric literal
+    if (std::isdigit(operand[0]) || (operand[0] == '-' && operand.length() > 1)) {
+        return std::stoi(operand);
+    }
+    
+    // It's a variable - auto-initialize to 0 if not declared
+    if (p.memory.find(operand) == p.memory.end()) {
+        p.memory[operand] = 0;
+    }
+    return p.memory[operand];
+}
+
+/**
+ * @brief Generate random operand (50% variable, 50% literal)
+ * @param var_pool Pool of variable names to choose from
+ * @param max_literal Maximum value for literal operands
+ * @return String containing either a variable name or numeric literal
+ */
+std::string generate_random_operand(const std::vector<std::string>& var_pool, int max_literal) {
+    if (rand() % PROBABILITY_DENOMINATOR == 0) {
+        return var_pool[rand() % var_pool.size()];
+    } else {
+        return std::to_string(rand() % max_literal);
+    }
+}
+
+/**
+ * @brief Execute arithmetic operation (ADD or SUBTRACT)
+ * @param p Process to execute on
+ * @param ins Instruction with operands
+ * @param is_add True for addition, false for subtraction
+ */
+void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
+    if (ins.args.size() < REQUIRED_OPERANDS_FOR_ARITHMETIC) {
+        if (verboseMode)
+            std::cout << "[" << p.name << "] ERROR: " << ins.op 
+                      << " requires 3 operands\n";
+        return;
+    }
+    
+    std::string var1 = ins.args[0];
+    int value2 = get_operand_value(ins.args[1], p);
+    int value3 = get_operand_value(ins.args[2], p);
+    
+    int result = is_add ? (value2 + value3) : (value2 - value3);
+    p.memory[var1] = clamp_to_uint16(result);
+}
+
+// ============================================================================
 // Process generation
 // ============================================================================
 
@@ -70,7 +138,7 @@ void generate_new_process() {
 
     // Generate process name (p01, p02, ...)
     int pid = next_process_id++;
-    std::string pname = std::string("p") + (pid < PROCESS_NAME_PADDING_THRESHOLD ? "0" : "") + std::to_string(pid);
+    std::string pname = "p" + (pid < PROCESS_NAME_PADDING_THRESHOLD ? "0" : "") + std::to_string(pid);
 
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
@@ -104,35 +172,15 @@ void generate_new_process() {
             case 2: // ADD (var1, var2/value, var3/value)
                 ins.op = "ADD";
                 ins.args.push_back(var_pool[rand() % var_pool.size()]); // var1
-                // var2/value - 50% chance variable, 50% chance literal
-                if (rand() % PROBABILITY_DENOMINATOR == 0) {
-                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
-                } else {
-                    ins.args.push_back(std::to_string(rand() % MAX_ARITHMETIC_OPERAND));
-                }
-                // var3/value - 50% chance variable, 50% chance literal
-                if (rand() % PROBABILITY_DENOMINATOR == 0) {
-                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
-                } else {
-                    ins.args.push_back(std::to_string(rand() % MAX_ARITHMETIC_OPERAND));
-                }
+                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
                 break;
                 
             case 3: // SUBTRACT (var1, var2/value, var3/value)
                 ins.op = "SUBTRACT";
                 ins.args.push_back(var_pool[rand() % var_pool.size()]); // var1
-                // var2/value - 50% chance variable, 50% chance literal
-                if (rand() % PROBABILITY_DENOMINATOR == 0) {
-                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
-                } else {
-                    ins.args.push_back(std::to_string(rand() % MAX_ARITHMETIC_OPERAND));
-                }
-                // var3/value - 50% chance variable, 50% chance literal
-                if (rand() % PROBABILITY_DENOMINATOR == 0) {
-                    ins.args.push_back(var_pool[rand() % var_pool.size()]);
-                } else {
-                    ins.args.push_back(std::to_string(rand() % MAX_ARITHMETIC_OPERAND));
-                }
+                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
+                ins.args.push_back(generate_random_operand(var_pool, MAX_ARITHMETIC_OPERAND));
                 break;
                 
             case 4: // SLEEP
@@ -356,101 +404,13 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     else if (ins.op == "DECLARE") {
         // Initialize variable and clamp to uint16 range [0, 65535]
         int value = std::stoi(ins.args[1]);
-        if (value < UINT16_MIN_VALUE) value = UINT16_MIN_VALUE;
-        if (value > UINT16_MAX_VALUE) value = UINT16_MAX_VALUE;
-        p.memory[ins.args[0]] = value;
+        p.memory[ins.args[0]] = clamp_to_uint16(value);
     }
     else if (ins.op == "ADD") {
-        // ADD (var1, var2/value, var3/value): var1 = var2/value + var3/value
-        // Auto-initialize variables to 0 if not declared (specs pg. 3)
-        if (ins.args.size() < REQUIRED_OPERANDS_FOR_ARITHMETIC) {
-            if (verboseMode)
-                std::cout << "[" << p.name << "] ERROR: ADD requires 3 operands\n";
-            p.current_instruction++;
-            return;
-        }
-        
-        std::string var1 = ins.args[0];
-        std::string operand2 = ins.args[1];
-        std::string operand3 = ins.args[2];
-        
-        // Get value of operand2 (variable or literal value)
-        int value2 = 0;
-        if (std::isdigit(operand2[0]) || (operand2[0] == '-' && operand2.length() > 1)) {
-            value2 = std::stoi(operand2);
-        } else {
-            // It's a variable - auto-initialize to 0 if not declared
-            if (p.memory.find(operand2) == p.memory.end()) {
-                p.memory[operand2] = 0;
-            }
-            value2 = p.memory[operand2];
-        }
-        
-        // Get value of operand3 (variable or literal value)
-        int value3 = 0;
-        if (std::isdigit(operand3[0]) || (operand3[0] == '-' && operand3.length() > 1)) {
-            value3 = std::stoi(operand3);
-        } else {
-            // It's a variable - auto-initialize to 0 if not declared
-            if (p.memory.find(operand3) == p.memory.end()) {
-                p.memory[operand3] = 0;
-            }
-            value3 = p.memory[operand3];
-        }
-        
-        // Perform addition and clamp to uint16 range [0, 65535]
-        int result = value2 + value3;
-        if (result < UINT16_MIN_VALUE) result = UINT16_MIN_VALUE;
-        if (result > UINT16_MAX_VALUE) result = UINT16_MAX_VALUE;
-        
-        // Auto-initialize var1 if needed, then store result
-        p.memory[var1] = result;
+        execute_arithmetic(p, ins, true);
     }
     else if (ins.op == "SUBTRACT") {
-        // SUBTRACT (var1, var2/value, var3/value): var1 = var2/value - var3/value
-        // Auto-initialize variables to 0 if not declared (specs pg. 3)
-        if (ins.args.size() < REQUIRED_OPERANDS_FOR_ARITHMETIC) {
-            if (verboseMode)
-                std::cout << "[" << p.name << "] ERROR: SUBTRACT requires 3 operands\n";
-            p.current_instruction++;
-            return;
-        }
-        
-        std::string var1 = ins.args[0];
-        std::string operand2 = ins.args[1];
-        std::string operand3 = ins.args[2];
-        
-        // Get value of operand2 (variable or literal value)
-        int value2 = 0;
-        if (std::isdigit(operand2[0]) || (operand2[0] == '-' && operand2.length() > 1)) {
-            value2 = std::stoi(operand2);
-        } else {
-            // It's a variable - auto-initialize to 0 if not declared
-            if (p.memory.find(operand2) == p.memory.end()) {
-                p.memory[operand2] = 0;
-            }
-            value2 = p.memory[operand2];
-        }
-        
-        // Get value of operand3 (variable or literal value)
-        int value3 = 0;
-        if (std::isdigit(operand3[0]) || (operand3[0] == '-' && operand3.length() > 1)) {
-            value3 = std::stoi(operand3);
-        } else {
-            // It's a variable - auto-initialize to 0 if not declared
-            if (p.memory.find(operand3) == p.memory.end()) {
-                p.memory[operand3] = 0;
-            }
-            value3 = p.memory[operand3];
-        }
-        
-        // Perform subtraction and clamp to uint16 range [0, 65535]
-        int result = value2 - value3;
-        if (result < UINT16_MIN_VALUE) result = UINT16_MIN_VALUE;
-        if (result > UINT16_MAX_VALUE) result = UINT16_MAX_VALUE;
-        
-        // Auto-initialize var1 if needed, then store result
-        p.memory[var1] = result;
+        execute_arithmetic(p, ins, false);
     }
     else if (ins.op == "SLEEP") {
         // Block process for specified ticks
