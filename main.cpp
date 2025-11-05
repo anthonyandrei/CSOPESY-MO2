@@ -39,6 +39,70 @@ bool verboseMode = true;        ///< Enable debug output
 // ============================================================================
 
 /**
+ * @brief Find process by name in all queues (except finished)
+ * @param name Process name to search for
+ * @return Pointer to process if found, nullptr otherwise
+ */
+Process* find_process(const std::string& name) {
+    // Search ready queue
+    for (auto& proc : ready_queue) {
+        if (proc.name == name) return &proc;
+    }
+    
+    // Search sleeping queue
+    for (auto& proc : sleeping_queue) {
+        if (proc.name == name) return &proc;
+    }
+    
+    // Search CPU cores
+    for (auto& proc : cpu_cores) {
+        if (proc.has_value() && proc.value().name == name) {
+            return &proc.value();
+        }
+    }
+    
+    return nullptr;
+}
+
+/**
+ * @brief Calculate CPU utilization metrics
+ * @return Tuple of (cores_used, cores_available, utilization_percentage)
+ */
+std::tuple<int, int, double> calculate_cpu_utilization() {
+    int coresUsed = 0;
+    for (auto& core : cpu_cores) {
+        if (core.has_value()) coresUsed++;
+    }
+    int coresAvailable = cpu_cores.size() - coresUsed;
+    double cpuUtilization = (cpu_cores.size() > 0) 
+        ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
+        : 0.0;
+    
+    return std::make_tuple(coresUsed, coresAvailable, cpuUtilization);
+}
+
+/**
+ * @brief Generate formatted process list string
+ * @return String containing all processes with their states
+ */
+std::string generate_process_list() {
+    std::stringstream ss;
+    
+    for (auto& p : ready_queue) 
+        ss << p.name << " [READY]\n";
+    for (auto& core : cpu_cores) {
+        if (core.has_value())
+            ss << core.value().name << " [RUNNING]\n";
+    }
+    for (auto& p : sleeping_queue) 
+        ss << p.name << " [SLEEPING]\n";
+    for (auto& p : finished_queue) 
+        ss << p.name << " [FINISHED]\n";
+    
+    return ss.str();
+}
+
+/**
  * @brief Display startup greeting banner
  * 
  * Shows emulator title, team member names, and initial instructions.
@@ -280,37 +344,9 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         // screen -r <name>: Attach to process console
         else if (subcommand == "-r") {
             std::lock_guard<std::mutex> lock(queue_mutex);
-            bool found = false;
-            Process* targetProc = nullptr;
+            Process* targetProc = find_process(subparam);
 
-            // Search all queues EXCEPT finished_queue (per specs pg. 3: finished processes cannot be reattached)
-            for (auto& proc : ready_queue) {
-                if (proc.name == subparam) {
-                    targetProc = &proc;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                for (auto& proc : sleeping_queue) {
-                    if (proc.name == subparam) {
-                        targetProc = &proc;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            if (!found) {
-                for (auto& proc : cpu_cores) {
-                    if (proc.has_value() && proc.value().name == subparam) {
-                        targetProc = &proc.value();
-                        found = true;
-                        break;
-                    }
-                }
-            }
-
-            if (found && targetProc) {
+            if (targetProc) {
                 // Clear console contents per specs pg. 3
                 system("cls");
                 
@@ -351,16 +387,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
         else if (subcommand == "-ls") {
             std::lock_guard<std::mutex> lock(queue_mutex);
             
-            // Calculate CPU utilization metrics (specs pg. 4)
-            int coresUsed = 0;
-            for (auto& core : cpu_cores) {
-                if (core.has_value()) 
-                    coresUsed++;
-            }
-            int coresAvailable = cpu_cores.size() - coresUsed;
-            double cpuUtilization = (cpu_cores.size() > 0) 
-                ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
-                : 0.0;
+            auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
             
             std::cout << "CPU utilization: " << std::fixed << std::setprecision(2) 
                       << cpuUtilization << "%\n";
@@ -368,16 +395,7 @@ void handleCommand(const string command, const string param, bool& isRunning) {
             std::cout << "Cores available: " << coresAvailable << "\n\n";
             
             std::cout << "Processes:\n";
-            for (auto& p : ready_queue) 
-                std::cout << p.name << " [READY]\n";
-            for (auto& core : cpu_cores) {
-                if (core.has_value())
-                    std::cout << core.value().name << " [RUNNING]\n";
-            }
-            for (auto& p : sleeping_queue) 
-                std::cout << p.name << " [SLEEPING]\n";
-            for (auto& p : finished_queue) 
-                std::cout << p.name << " [FINISHED]\n";
+            std::cout << generate_process_list();
         }
     }
     else if (command == "scheduler-start") {
@@ -395,36 +413,17 @@ void handleCommand(const string command, const string param, bool& isRunning) {
 
         std::lock_guard<std::mutex> lock(queue_mutex);
         std::ofstream log("csopesy-log.txt");
-        std::stringstream logData;
 
-        // Calculate CPU utilization metrics (specs pg. 4 same as screen -ls)
-        int coresUsed = 0;
-        for (auto& core : cpu_cores) {
-            if (core.has_value()) coresUsed++;
-        }
-        int coresAvailable = cpu_cores.size() - coresUsed;
-        double cpuUtilization = (cpu_cores.size() > 0) 
-            ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
-            : 0.0;
+        auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
         
-        logData << "CPU utilization: " << std::fixed << std::setprecision(2) 
-                << cpuUtilization << "%\n";
-        logData << "Cores used: " << coresUsed << "\n";
-        logData << "Cores available: " << coresAvailable << "\n\n";
+        log << "CPU utilization: " << std::fixed << std::setprecision(2) 
+            << cpuUtilization << "%\n";
+        log << "Cores used: " << coresUsed << "\n";
+        log << "Cores available: " << coresAvailable << "\n\n";
         
-        logData << "Processes:\n";
-        for(auto& p : ready_queue)
-            logData << p.name << " [READY]\n";
-        for(auto& core : cpu_cores) {
-            if(core.has_value())
-                logData << core.value().name << " [RUNNING]\n";
-        }
-        for(auto& p : sleeping_queue)
-            logData << p.name << " [SLEEPING]\n";
-        for(auto& p : finished_queue)
-            logData << p.name << " [FINISHED]\n";
+        log << "Processes:\n";
+        log << generate_process_list();
 
-        log << logData.str();
         log.close();
         
         std::cout << "Report saved to csopesy-log.txt\n";

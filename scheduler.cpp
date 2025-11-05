@@ -138,7 +138,7 @@ void generate_new_process() {
 
     // Generate process name (p01, p02, ...)
     int pid = next_process_id++;
-    std::string pname = "p" + (pid < PROCESS_NAME_PADDING_THRESHOLD ? "0" : "") + std::to_string(pid);
+    std::string pname = "p" + std::string(pid < PROCESS_NAME_PADDING_THRESHOLD ? "0" : "") + std::to_string(pid);
 
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
