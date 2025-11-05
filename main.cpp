@@ -328,12 +328,13 @@ void handleCommand(const string command, const string param, bool& isRunning) {
             // Clear console contents per specs pg. 3
             system("cls");
             
-            Process newP(next_process_id++, subparam, 5);
+            Process newP(next_process_id++, subparam, 6);
             newP.instructions = {
                 {"DECLARE", {"x","10"}},
-                {"ADD", {"x","5"}},
+                {"DECLARE", {"y","5"}},
+                {"ADD", {"x","x","y"}},           // x = x + y (10 + 5 = 15)
                 {"PRINT", {"Hello world from " + subparam + "!"}},
-                {"SUBTRACT", {"x","3"}},
+                {"SUBTRACT", {"x","x","3"}},      // x = x - 3 (15 - 3 = 12)
                 {"PRINT", {"Hello world from " + subparam + "!"}}
             };
 
