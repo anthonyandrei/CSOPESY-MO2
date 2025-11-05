@@ -381,8 +381,15 @@ void execute_cpu_tick() {
             // Execute one instruction
             execute_instruction(p, current_tick);
 
-            // Remove from core if finished or sleeping
-            if (p.state == ProcessState::FINISHED || p.state == ProcessState::SLEEPING) {
+            // Check if process finished or went to sleep (state changed by execute_instruction)
+            if (p.state == ProcessState::FINISHED) {
+                finished_queue.push_back(std::move(p));
+                cpu_cores[i].reset();
+                continue;
+            }
+            
+            if (p.state == ProcessState::SLEEPING) {
+                sleeping_queue.push_back(std::move(p));
                 cpu_cores[i].reset();
                 continue;
             }
@@ -419,14 +426,14 @@ void execute_cpu_tick() {
  * - DECLARE <var> <value>: Initialize variable
  * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
  * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
- * - SLEEP <ticks>: Block process for <ticks> CPU ticks
- * - FOR <count>: Duplicate next instruction <count> times
+ * - SLEEP <ticks>: Block process for <ticks> CPU ticks (sets state to SLEEPING)
+ * - FOR <count> <block_size>: Loop control
  * 
  * Variables are stored in p.memory (uint16 clamped to [0, 65535]).
  * Undeclared variables auto-initialize to 0.
  * 
- * On completion (all instructions executed), process moves to finished_queue.
- * On SLEEP, process moves to sleeping_queue.
+ * When process completes or sleeps, only the state is updated.
+ * Caller (execute_cpu_tick) is responsible for moving process to appropriate queue.
  */
 void execute_instruction(Process& p, uint64_t current_tick) {
     // Implement delays-per-exec: busy-wait before executing instruction
@@ -441,8 +448,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
             std::cout << "\n[Scheduler] Process " << p.name << " FINISHED." << std::endl;
         
         p.state = ProcessState::FINISHED;
-        finished_queue.push_back(std::move(p));
-        return;
+        return;  // Caller will move to finished_queue and reset core
     }
 
     Instruction& ins = p.instructions[p.current_instruction];
@@ -474,8 +480,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
         // Block process for specified ticks
         p.state = ProcessState::SLEEPING;
         p.sleep_until_tick = current_tick + std::stoi(ins.args[0]);
-        sleeping_queue.push_back(std::move(p));
-        return;
+        return;  // Caller will move to sleeping_queue and reset core
     }
     else if (ins.op == "FOR") {
         // FOR loop: Execute a block of instructions multiple times
