@@ -40,10 +40,10 @@ enum class ProcessState {
  * @brief Single instruction in a process
  * 
  * Supported operations (specs pg. 2-3):
- * - PRINT <message>
+ * - PRINT <message>: Supports variable concatenation (+varname)
  * - DECLARE <var> <value>
- * - ADD <var> <value>
- * - SUBTRACT <var> <value>
+ * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
+ * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
  * - SLEEP <ticks>
  * - FOR <count>
  */

@@ -206,15 +206,15 @@ void execute_cpu_tick() {
  * 
  * Executes p.instructions[p.current_instruction] and updates state.
  * Supported instructions (specs pg. 2-3):
- * - PRINT <message>: Output message to console
+ * - PRINT <message>: Output message to console (supports variable concatenation: +varname)
  * - DECLARE <var> <value>: Initialize variable
- * - ADD <var> <value>: Add to variable
- * - SUBTRACT <var> <value>: Subtract from variable
+ * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
+ * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
  * - SLEEP <ticks>: Block process for <ticks> CPU ticks
  * - FOR <count>: Duplicate next instruction <count> times
  * 
  * Variables are stored in p.memory (uint16 clamped to [0, 65535]).
- * Undeclared variables default to 0.
+ * Undeclared variables auto-initialize to 0.
  * 
  * On completion (all instructions executed), process moves to finished_queue.
  * On SLEEP, process moves to sleeping_queue.
@@ -240,7 +240,42 @@ void execute_instruction(Process& p, uint64_t current_tick) {
 
     // Execute instruction based on operation
     if (ins.op == "PRINT") {
-        std::cout << "[" << p.name << "] " << ins.args[0] << std::endl;
+        // PRINT instruction can handle variable concatenation: PRINT ("Value from: " +x)
+        // Parse the message and replace variables with their values
+        std::string message = ins.args[0];
+        size_t pos = 0;
+        
+        // Look for pattern: +varname (variable concatenation)
+        while ((pos = message.find('+', pos)) != std::string::npos) {
+            // Extract variable name after '+'
+            size_t varStart = pos + 1;
+            size_t varEnd = varStart;
+            
+            // Find the end of the variable name (alphanumeric + underscore)
+            while (varEnd < message.length() && 
+                   (std::isalnum(message[varEnd]) || message[varEnd] == '_')) {
+                varEnd++;
+            }
+            
+            if (varEnd > varStart) {
+                std::string varName = message.substr(varStart, varEnd - varStart);
+                
+                // Get variable value (auto-initialize to 0 if not declared)
+                int varValue = 0;
+                if (p.memory.find(varName) != p.memory.end()) {
+                    varValue = p.memory[varName];
+                } else {
+                    p.memory[varName] = 0;  // Auto-declare as per specs pg. 3
+                }
+                
+                // Replace +varName with the variable value
+                message.replace(pos, varEnd - pos, std::to_string(varValue));
+            }
+            
+            pos++;
+        }
+        
+        std::cout << "[" << p.name << "] " << message << std::endl;
     }
     else if (ins.op == "DECLARE") {
         // Initialize variable and clamp to uint16 range [0, 65535]
@@ -250,18 +285,96 @@ void execute_instruction(Process& p, uint64_t current_tick) {
         p.memory[ins.args[0]] = value;
     }
     else if (ins.op == "ADD") {
-        // Add to variable and clamp to uint16 range [0, 65535]
-        int result = p.memory[ins.args[0]] + std::stoi(ins.args[1]);
+        // ADD (var1, var2/value, var3/value): var1 = var2/value + var3/value
+        // Auto-initialize variables to 0 if not declared (specs pg. 3)
+        if (ins.args.size() < 3) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: ADD requires 3 operands\n";
+            p.current_instruction++;
+            return;
+        }
+        
+        std::string var1 = ins.args[0];
+        std::string operand2 = ins.args[1];
+        std::string operand3 = ins.args[2];
+        
+        // Get value of operand2 (variable or literal value)
+        int value2 = 0;
+        if (std::isdigit(operand2[0]) || (operand2[0] == '-' && operand2.length() > 1)) {
+            value2 = std::stoi(operand2);
+        } else {
+            // It's a variable - auto-initialize to 0 if not declared
+            if (p.memory.find(operand2) == p.memory.end()) {
+                p.memory[operand2] = 0;
+            }
+            value2 = p.memory[operand2];
+        }
+        
+        // Get value of operand3 (variable or literal value)
+        int value3 = 0;
+        if (std::isdigit(operand3[0]) || (operand3[0] == '-' && operand3.length() > 1)) {
+            value3 = std::stoi(operand3);
+        } else {
+            // It's a variable - auto-initialize to 0 if not declared
+            if (p.memory.find(operand3) == p.memory.end()) {
+                p.memory[operand3] = 0;
+            }
+            value3 = p.memory[operand3];
+        }
+        
+        // Perform addition and clamp to uint16 range [0, 65535]
+        int result = value2 + value3;
         if (result < UINT16_MIN_VALUE) result = UINT16_MIN_VALUE;
         if (result > UINT16_MAX_VALUE) result = UINT16_MAX_VALUE;
-        p.memory[ins.args[0]] = result;
+        
+        // Auto-initialize var1 if needed, then store result
+        p.memory[var1] = result;
     }
     else if (ins.op == "SUBTRACT") {
-        // Subtract from variable and clamp to uint16 range [0, 65535]
-        int result = p.memory[ins.args[0]] - std::stoi(ins.args[1]);
+        // SUBTRACT (var1, var2/value, var3/value): var1 = var2/value - var3/value
+        // Auto-initialize variables to 0 if not declared (specs pg. 3)
+        if (ins.args.size() < 3) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: SUBTRACT requires 3 operands\n";
+            p.current_instruction++;
+            return;
+        }
+        
+        std::string var1 = ins.args[0];
+        std::string operand2 = ins.args[1];
+        std::string operand3 = ins.args[2];
+        
+        // Get value of operand2 (variable or literal value)
+        int value2 = 0;
+        if (std::isdigit(operand2[0]) || (operand2[0] == '-' && operand2.length() > 1)) {
+            value2 = std::stoi(operand2);
+        } else {
+            // It's a variable - auto-initialize to 0 if not declared
+            if (p.memory.find(operand2) == p.memory.end()) {
+                p.memory[operand2] = 0;
+            }
+            value2 = p.memory[operand2];
+        }
+        
+        // Get value of operand3 (variable or literal value)
+        int value3 = 0;
+        if (std::isdigit(operand3[0]) || (operand3[0] == '-' && operand3.length() > 1)) {
+            value3 = std::stoi(operand3);
+        } else {
+            // It's a variable - auto-initialize to 0 if not declared
+            if (p.memory.find(operand3) == p.memory.end()) {
+                p.memory[operand3] = 0;
+            }
+            value3 = p.memory[operand3];
+        }
+        
+        // Perform subtraction and clamp to uint16 range [0, 65535]
+        int result = value2 - value3;
         if (result < UINT16_MIN_VALUE) result = UINT16_MIN_VALUE;
         if (result > UINT16_MAX_VALUE) result = UINT16_MAX_VALUE;
-        p.memory[ins.args[0]] = result;
+        
+        // Auto-initialize var1 if needed, then store result
+        p.memory[var1] = result;
     }
     else if (ins.op == "SLEEP") {
         // Block process for specified ticks
