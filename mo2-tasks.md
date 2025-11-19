@@ -27,7 +27,7 @@
 
 ---
 
-## Member 2: Process Representation & Instruction Engine
+## Member 2: Process Representation & Instruction Engine (Lance)
 **Role:** PCB + Instruction Execution + Memory Ops Bridge
 
 ### Responsibilities
