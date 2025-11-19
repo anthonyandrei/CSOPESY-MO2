@@ -36,8 +36,7 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ---
 
-## Member 2: Process Representation & Instruction Engine
-
+## Member 2: Process Representation & Instruction Engine (Lance)
 **Role:** PCB + Instruction Execution + Memory Ops Bridge
 
 ### Responsibilities
@@ -69,7 +68,7 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ---
 
-## Member 3: Scheduler & CPU Tick System 
+## Member 3: Scheduler & CPU Tick System (Andrei)
 
 **Role:** Instruction Dispatch, Timing, and Paging-Aware Scheduling
 
