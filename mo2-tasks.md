@@ -95,7 +95,7 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ---
 
-## Member 4: CLI, Commands, Output, Testing & Deliverables
+## Member 4: CLI, Commands, Output, Testing & Deliverables (Brent)
 
 **Role:** User Interface Layer & Reporting / Documentation
 
