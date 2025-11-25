@@ -6,7 +6,7 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ---
 
-## Member 1: Memory Manager & Page Handling
+## Member 1: Memory Manager & Page Handling (Leomarc)
 
 **Role:** Core Demand Paging & Backing Store Subsystem
 
