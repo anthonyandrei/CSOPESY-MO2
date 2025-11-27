@@ -17,7 +17,7 @@
 ### Build and Run
 
 1. Clone GitHub repository
-2. Open CSOPESY-MO1.sln
+2. Open CSOPESY-MO2.sln
 3. Click Local Windows Debugger in Visual Studio
 
 ## Authors
