@@ -33,7 +33,7 @@ enum class ProcessState {
     RUNNING,    ///< Currently executing on a CPU core
     SLEEPING,   ///< Blocked, waiting for timer to expire
     FINISHED,    ///< All instructions completed
-    MEMORY_VIOLATED
+    MEMORY_VIOLATED ///< Memory access violation detected
 };
 
 /**
