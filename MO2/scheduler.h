@@ -32,7 +32,8 @@ enum class ProcessState {
     READY,      ///< In ready queue, waiting for CPU
     RUNNING,    ///< Currently executing on a CPU core
     SLEEPING,   ///< Blocked, waiting for timer to expire
-    FINISHED    ///< All instructions completed
+    FINISHED,    ///< All instructions completed
+    MEMORY_VIOLATED
 };
 
 /**

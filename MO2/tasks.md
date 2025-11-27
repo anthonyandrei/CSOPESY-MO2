@@ -74,17 +74,17 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ### Responsibilities
 
--   Reuse MO1 FCFS/RR scheduler core; read `scheduler` and `quantum-cycles` from config
--   Only dispatch instructions if required page is resident (else trigger fault path)
--   Stall/retry semantics on page fault
--   Handle SLEEP instructions & wake-ups
--   Manage queues: READY, SLEEPING, FINISHED, MEMORY-VIOLATED
--   Global CPU tick counter & per-tick execution loop
--   Track metrics:
+-   [X] Reuse MO1 FCFS/RR scheduler core; read `scheduler` and `quantum-cycles` from config
+-   [X] Only dispatch instructions if required page is resident (else trigger fault path)
+-   [X] Stall/retry semantics on page fault
+-   [X] Handle SLEEP instructions & wake-ups
+-   [X] Manage queues: READY, SLEEPING, FINISHED, MEMORY-VIOLATED
+-   [X] Global CPU tick counter & per-tick execution loop
+-   [X] Track metrics:
     -   Total ticks, idle ticks, active ticks
     -   Pages in/out (query Memory Manager)
--   Batch process generation (`scheduler-start`) including READ/WRITE in generated scripts respecting `min-ins`/`max-ins`
--   Respect `delays-per-exec` as busy-wait (process holds CPU during delay)
+-   [X] Batch process generation (`scheduler-start`) including READ/WRITE in generated scripts respecting `min-ins`/`max-ins`
+-   [X] Respect `delays-per-exec` as busy-wait (process holds CPU during delay)
 
 ### Deliverables
 

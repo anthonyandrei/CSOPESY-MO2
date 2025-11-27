@@ -9,6 +9,7 @@
 #include <chrono>
 #include <iostream>
 #include <random>
+#include <sstream>
 
 // External references from main.cpp
 extern Config config;
@@ -18,36 +19,39 @@ extern bool verboseMode;
 // ============================================================================
 // Global scheduler state
 // ============================================================================
-constexpr int UINT16_MAX_VALUE = 65535;                ///< Maximum value for uint16 variables
-constexpr int UINT16_MIN_VALUE = 0;                    ///< Minimum value for uint16 variables
-constexpr int MAX_FOR_LOOP_DEPTH = 3;                  ///< Maximum FOR loop nesting depth per specs pg. 3
-constexpr int NUM_INSTRUCTION_TYPES = 5;               ///< Number of instruction types (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
-constexpr int NUM_INSTRUCTION_TYPES_WITH_FOR = 6;     ///< Number of instruction types including FOR
-constexpr int FOR_LOOP_PROBABILITY = 10;              ///< 1 in N chance to generate a FOR loop
-constexpr int MIN_FOR_ITERATIONS = 2;                 ///< Minimum FOR loop iterations
-constexpr int MAX_FOR_ITERATIONS = 5;                 ///< Maximum FOR loop iterations
-constexpr int MIN_FOR_BODY_SIZE = 2;                  ///< Minimum instructions in FOR loop body
-constexpr int MAX_FOR_BODY_SIZE = 5;                  ///< Maximum instructions in FOR loop body
-constexpr int PROCESS_NAME_PADDING_THRESHOLD = 10;     ///< Process IDs below this get zero-padded (p01, p02, etc.)
-constexpr int MAX_DECLARE_VALUE = 100;                 ///< Maximum random value for DECLARE instruction (0-99)
-constexpr int MAX_ARITHMETIC_OPERAND = 50;             ///< Maximum random value for ADD/SUBTRACT operands (0-49)
-constexpr int MIN_SLEEP_TICKS = 1;                     ///< Minimum sleep duration in CPU ticks
-constexpr int MAX_SLEEP_TICKS = 10;                    ///< Maximum sleep duration in CPU ticks
-constexpr int PROBABILITY_DENOMINATOR = 2;             ///< Denominator for 50% probability checks
-constexpr int REQUIRED_OPERANDS_FOR_ARITHMETIC = 3;    ///< Required operand count for ADD/SUBTRACT
-constexpr int CPU_TICK_DELAY_MS = 100;                 ///< Real-time delay per CPU tick in milliseconds
+constexpr int UINT16_MAX_VALUE = 65535;                 ///< Maximum value for uint16 variables
+constexpr int UINT16_MIN_VALUE = 0;                     ///< Minimum value for uint16 variables
+constexpr int MAX_FOR_LOOP_DEPTH = 3;                   ///< Maximum FOR loop nesting depth per specs pg. 3
+constexpr int NUM_INSTRUCTION_TYPES = 7;                ///< Number of instruction types (PRINT, DECLARE, ADD, SUBTRACT, SLEEP, READ, WRITE)
+constexpr int NUM_INSTRUCTION_TYPES_WITH_FOR = 6;       ///< Number of instruction types including FOR
+constexpr int FOR_LOOP_PROBABILITY = 10;                ///< 1 in N chance to generate a FOR loop
+constexpr int MIN_FOR_ITERATIONS = 2;                   ///< Minimum FOR loop iterations
+constexpr int MAX_FOR_ITERATIONS = 5;                   ///< Maximum FOR loop iterations
+constexpr int MIN_FOR_BODY_SIZE = 2;                    ///< Minimum instructions in FOR loop body
+constexpr int MAX_FOR_BODY_SIZE = 5;                    ///< Maximum instructions in FOR loop body
+constexpr int PROCESS_NAME_PADDING_THRESHOLD = 10;      ///< Process IDs below this get zero-padded (p01, p02, etc.)
+constexpr int MAX_DECLARE_VALUE = 100;                  ///< Maximum random value for DECLARE instruction (0-99)
+constexpr int MAX_ARITHMETIC_OPERAND = 50;              ///< Maximum random value for ADD/SUBTRACT operands (0-49)
+constexpr int MIN_SLEEP_TICKS = 1;                      ///< Minimum sleep duration in CPU ticks
+constexpr int MAX_SLEEP_TICKS = 10;                     ///< Maximum sleep duration in CPU ticks
+constexpr int PROBABILITY_DENOMINATOR = 2;              ///< Denominator for 50% probability checks
+constexpr int REQUIRED_OPERANDS_FOR_ARITHMETIC = 3;     ///< Required operand count for ADD/SUBTRACT
+constexpr int CPU_TICK_DELAY_MS = 100;                  ///< Real-time delay per CPU tick in milliseconds
+constexpr int MAX_MEMORY_SIZE = 4096;                   ///< max memory size for hex address generation (Using 4096 as a dummy max memory size for now)
 
-std::atomic<uint64_t> global_cpu_tick(0);              ///< Global CPU tick counter
-std::atomic<bool> is_generating_processes(false);      ///< True when scheduler-start is active
-std::atomic<int> next_process_id(1);                   ///< Next process ID to assign
+std::atomic<uint64_t> global_cpu_tick(0);               ///< Global CPU tick counter
+std::atomic<bool> is_generating_processes(false);       ///< True when scheduler-start is active
+std::atomic<int> next_process_id(1);                    ///< Next process ID to assign
+std::atomic<uint64_t> total_active_ticks(0);            ///< Total CPU ticks spent executing processes
+std::atomic<uint64_t> total_idle_ticks(0);              ///< Total CPU ticks spent idle
 
-std::mutex queue_mutex;                                ///< Protects all queues and cpu_cores
+std::mutex queue_mutex;                                 ///< Protects all queues and cpu_cores
 
-std::list<Process> ready_queue;                        ///< Processes waiting for CPU
-std::list<Process> sleeping_queue;                     ///< Processes blocked on SLEEP
-std::list<Process> finished_queue;                     ///< Completed processes
+std::list<Process> ready_queue;                         ///< Processes waiting for CPU
+std::list<Process> sleeping_queue;                      ///< Processes blocked on SLEEP
+std::list<Process> finished_queue;                      ///< Completed processes
 
-std::vector<std::optional<Process>> cpu_cores;         ///< Per-core running process
+std::vector<std::optional<Process>> cpu_cores;          ///< Per-core running process
 
 // ============================================================================
 // Helper functions
@@ -58,6 +62,16 @@ std::vector<std::optional<Process>> cpu_cores;         ///< Per-core running pro
  */
 int random_in_range(int min, int max) {
     return min + (rand() % (max - min + 1));
+}
+
+/**
+ * @brief Generate a random Hex Address string (e.g., "0x1A4")
+ */
+std::string generate_hex_address(int max_mem) {
+    int addr = rand() % max_mem;
+    std::stringstream ss;
+    ss << "0x" << std::uppercase << std::hex << addr;
+    return ss.str();
 }
 
 /**
@@ -81,17 +95,20 @@ std::string process_print_message(std::string message, Process& p) {
     size_t pos = 0;
     
     // Look for pattern: +varname (variable concatenation)
+    // Example: "Result: +x" becomes "Result: 42" if x=42
     while ((pos = message.find('+', pos)) != std::string::npos) {
         // Extract variable name after '+'
-        size_t varStart = pos + 1;
+        size_t varStart = pos + 1;  // Skip the '+' character
         size_t varEnd = varStart;
         
         // Find the end of the variable name (alphanumeric + underscore)
+        // Stops at first non-identifier character (space, comma, etc.)
         while (varEnd < message.length() && 
                (std::isalnum(message[varEnd]) || message[varEnd] == '_')) {
             varEnd++;
         }
         
+        // Only process if we found a valid identifier after '+'
         if (varEnd > varStart) {
             std::string varName = message.substr(varStart, varEnd - varStart);
             
@@ -101,10 +118,12 @@ std::string process_print_message(std::string message, Process& p) {
             }
             int varValue = p.memory[varName];
             
-            // Replace +varName with the variable value
+            // Replace entire "+varName" substring with numeric value
+            // Example: "+x" (3 chars) replaced with "42" (2 chars)
             message.replace(pos, varEnd - pos, std::to_string(varValue));
         }
         
+        // Move to next position to search for more '+' patterns
         pos++;
     }
     
@@ -127,7 +146,8 @@ int clamp_to_uint16(int value) {
  * @return Resolved integer value
  */
 int get_operand_value(const std::string& operand, Process& p) {
-    // Check if it's a numeric literal
+    // Check if it's a numeric literal (e.g., "42" or "-5")
+    // Must start with digit, or '-' followed by at least one digit
     if (std::isdigit(operand[0]) || (operand[0] == '-' && operand.length() > 1)) {
         return std::stoi(operand);
     }
@@ -217,10 +237,12 @@ void generate_new_process() {
     std::vector<std::string> var_pool = {"x", "y", "z", "counter", "sum", "temp", "result", "value"};
     
     // Generate instructions in a flat loop with FOR(repeats, block_size) format
+    // Note: FOR instructions don't execute themselves, they control execution of following instructions
     for (uint32_t i = 0; i < num_instructions; i++) {
         Instruction ins;
         
         // 10% chance of FOR if we have room for loop body
+        // remaining_instructions = instructions after current position (not including current)
         uint32_t remaining_instructions = num_instructions - i - 1;
         bool can_generate_for = remaining_instructions >= MIN_FOR_BODY_SIZE &&
                                 rand() % FOR_LOOP_PROBABILITY == 0;
@@ -238,7 +260,7 @@ void generate_new_process() {
             int block_size = random_in_range(MIN_FOR_BODY_SIZE, max_block);
             ins.args.push_back(std::to_string(block_size));
         } else {
-            // Generate regular instruction (PRINT, DECLARE, ADD, SUBTRACT, SLEEP)
+            // Generate regular instruction (PRINT, DECLARE, ADD, SUBTRACT, SLEEP, READ, WRITE)
             int instruction_type = rand() % NUM_INSTRUCTION_TYPES;
             
             switch (instruction_type) {
@@ -270,6 +292,16 @@ void generate_new_process() {
                 case 4: // SLEEP
                     ins.op = "SLEEP";
                     ins.args.push_back(std::to_string(random_in_range(MIN_SLEEP_TICKS, MAX_SLEEP_TICKS)));
+                    break;
+                case 5: //READ
+                    ins.op = "READ";
+                    ins.args.push_back(var_pool[rand() % var_pool.size()]); // var
+                    ins.args.push_back(generate_hex_address(MAX_MEMORY_SIZE)); 
+                    break;
+                case 6: //WRITE
+                    ins.op = "WRITE";
+                    ins.args.push_back(generate_hex_address(MAX_MEMORY_SIZE)); 
+                    ins.args.push_back(generate_random_operand(var_pool, MAX_DECLARE_VALUE));
                     break;
             }
         }
@@ -363,9 +395,10 @@ void dispatch_processes() {
  * @brief Execute one CPU tick for all running processes
  * 
  * For each occupied CPU core:
- * 1. Execute one instruction via execute_instruction()
- * 2. Check if process finished or sleeping (if so, remove from core)
- * 3. For RR: decrement quantum, preempt if quantum expires
+ * 1. Check if instruction page is resident (future memory manager integration)
+ * 2. Execute one instruction via execute_instruction()
+ * 3. Check if process finished, memory violated, or sleeping (if so, remove from core)
+ * 4. For RR: decrement quantum, preempt if quantum expires
  * 
  * Called once per scheduler loop iteration (every 100ms real time).
  */
@@ -378,8 +411,24 @@ void execute_cpu_tick() {
         if (cpu_cores[i].has_value()) {
             Process& p = *cpu_cores[i];
 
+            // TODO: Uncomment when memory manager is ready
+            
+            // bool is_resident = is_page_resident(p.id, p.current_instruction); 
+            // if (!is_resident) {
+            //     request_page(p.id, p.current_instruction);
+            //     // Do NOT execute instruction.
+            //     // Do NOT decrement quantum (stalling).
+            //     continue; 
+            // }
+
             // Execute one instruction
             execute_instruction(p, current_tick);
+
+            if (p.state == ProcessState::MEMORY_VIOLATED) {
+                finished_queue.push_back(std::move(p));
+                cpu_cores[i].reset();
+                continue;
+            }
 
             // Check if process finished or went to sleep (state changed by execute_instruction)
             if (p.state == ProcessState::FINISHED) {
@@ -421,18 +470,20 @@ void execute_cpu_tick() {
  * @param current_tick Current global CPU tick
  * 
  * Executes p.instructions[p.current_instruction] and updates state.
- * Supported instructions (specs pg. 2-3):
+ * Supported instructions:
  * - PRINT <message>: Output message to console (supports variable concatenation: +varname)
  * - DECLARE <var> <value>: Initialize variable
  * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
  * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
  * - SLEEP <ticks>: Block process for <ticks> CPU ticks (sets state to SLEEPING)
- * - FOR <count> <block_size>: Loop control
+ * - READ <var> <address>: Read from memory address into variable
+ * - WRITE <address> <var/value>: Write variable or value to memory address
+ * - FOR <iterations> <block_size>: Loop control
  * 
  * Variables are stored in p.memory (uint16 clamped to [0, 65535]).
  * Undeclared variables auto-initialize to 0.
  * 
- * When process completes or sleeps, only the state is updated.
+ * When process completes, sleeps, or encounters memory violation, only the state is updated.
  * Caller (execute_cpu_tick) is responsible for moving process to appropriate queue.
  */
 void execute_instruction(Process& p, uint64_t current_tick) {
@@ -536,9 +587,11 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     p.current_instruction++;
     
     // Check if we've reached the end of a FOR loop body
+    // Loop stack tracks nested FOR loops (up to MAX_FOR_LOOP_DEPTH levels)
     if (!p.loop_stack.empty()) {
-        LoopStruct& frame = p.loop_stack.back();
+        LoopStruct& frame = p.loop_stack.back();  // Get innermost loop
         
+        // Check if we've executed past the last instruction in the loop body
         if (p.current_instruction > frame.loop_end) {
             // We've finished one iteration of the loop body
             if (frame.iterations_remaining > 0) {
@@ -546,7 +599,8 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 frame.iterations_remaining--;
                 p.current_instruction = frame.loop_start;
             } else {
-                // Loop finished - pop frame and continue
+                // All iterations complete - exit this loop level
+                // If this was a nested loop, control returns to outer loop
                 p.loop_stack.pop_back();
             }
         }
@@ -580,6 +634,25 @@ void scheduler_loop() {
             // Increment global CPU tick
             global_cpu_tick++;
             uint64_t current_tick = global_cpu_tick.load();
+            
+            // Count how many CPU cores are actively running processes
+            // This is used for CPU utilization metrics
+            int active_cores = 0;
+            {
+                // Lock to safely access cpu_cores vector
+                std::lock_guard<std::mutex> lock(queue_mutex);
+                for(const auto& core : cpu_cores) {
+                    if (core.has_value()) {
+                        active_cores++;
+                    }
+                }
+            }
+            
+            // Update CPU utilization statistics
+            // total_active_ticks tracks sum of all core-ticks spent executing
+            // total_idle_ticks tracks sum of all core-ticks spent idle
+            total_active_ticks += active_cores;
+            total_idle_ticks += (config.numCPU - active_cores);
 
             // Periodic process generation
             if (is_generating_processes.load() &&
