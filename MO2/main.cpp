@@ -1,10 +1,6 @@
 /**
  * @file main.cpp
  * @brief Main CLI shell and command interpreter for CSOPESY OS Emulator
- * 
- * Implements command-line interface, configuration loading, and command routing.
- * Responsible for user interaction and dispatching commands to scheduler.
- * 
  */
 
 #include "config.h"
@@ -28,127 +24,67 @@
 using namespace std;
 
 // ============================================================================
-// Global state
+// Global variables
 // ============================================================================
-Config config;                  ///< System configuration (loaded from config.txt)
-bool isInitialized = false;     ///< Initialization guard (prevents commands before setup)
-bool verboseMode = true;        ///< Enable debug output
+Config config;
+bool isInitialized = false;
+bool verboseMode = true;
 
 // ============================================================================
-// Helper functions
+// Utility helpers
 // ============================================================================
 
 /**
- * @brief Find process by name in all queues (except finished)
- * @param name Process name to search for
- * @return Pointer to process if found, nullptr otherwise
+ * @brief Find process by name in all queues and CPU cores
  */
 Process* find_process(const std::string& name) {
-    // Search ready queue
-    for (auto& proc : ready_queue) {
-        if (proc.name == name) return &proc;
-    }
-    
-    // Search sleeping queue
-    for (auto& proc : sleeping_queue) {
-        if (proc.name == name) return &proc;
-    }
-    
-    // Search CPU cores
-    for (auto& proc : cpu_cores) {
-        if (proc.has_value() && proc.value().name == name) {
-            return &proc.value();
-        }
-    }
-    
+    for (auto& p : ready_queue)
+        if (p.name == name) return &p;
+
+    for (auto& p : sleeping_queue)
+        if (p.name == name) return &p;
+
+    for (auto& core : cpu_cores)
+        if (core.has_value() && core->name == name)
+            return &core.value();
+
+    for (auto& p : finished_queue)
+        if (p.name == name) return &p;
+
     return nullptr;
 }
 
 /**
- * @brief Calculate CPU utilization metrics
- * @return Tuple of (cores_used, cores_available, utilization_percentage)
+ * @brief Calculate CPU utilization
  */
-std::tuple<int, int, double> calculate_cpu_utilization() {
-    int coresUsed = 0;
-    for (auto& core : cpu_cores) {
-        if (core.has_value()) coresUsed++;
-    }
-    int coresAvailable = cpu_cores.size() - coresUsed;
-    double cpuUtilization = (cpu_cores.size() > 0) 
-        ? (static_cast<double>(coresUsed) / cpu_cores.size()) * 100.0 
-        : 0.0;
-    
-    return std::make_tuple(coresUsed, coresAvailable, cpuUtilization);
+tuple<int, int, double> calculate_cpu_utilization() {
+    int used = 0;
+    for (auto& c : cpu_cores)
+        if (c.has_value()) used++;
+
+    int available = static_cast<int>(cpu_cores.size()) - used;
+    double utilization = cpu_cores.empty()
+        ? 0.0
+        : (static_cast<double>(used) / cpu_cores.size()) * 100.0;
+
+    return { used, available, utilization };
 }
 
 /**
- * @brief Generate formatted process list string
- * @return String containing all processes with their states
+ * @brief Generate formatted process list
  */
-std::string generate_process_list() {
-    std::stringstream ss;
-    
-    for (auto& p : ready_queue) 
-        ss << p.name << " [READY]\n";
-    for (auto& core : cpu_cores) {
-        if (core.has_value())
-            ss << core.value().name << " [RUNNING]\n";
-    }
-    for (auto& p : sleeping_queue) 
-        ss << p.name << " [SLEEPING]\n";
-    for (auto& p : finished_queue) 
-        ss << p.name << " [FINISHED]\n";
-    
+string generate_process_list() {
+    stringstream ss;
+    for (auto& p : ready_queue)    ss << p.name << " [READY]\n";
+    for (auto& c : cpu_cores)
+        if (c.has_value())         ss << c->name << " [RUNNING]\n";
+    for (auto& p : sleeping_queue) ss << p.name << " [SLEEPING]\n";
+    for (auto& p : finished_queue) ss << p.name << " [FINISHED]\n";
     return ss.str();
 }
 
 /**
- * @brief Display startup greeting banner
- * 
- * Shows emulator title, team member names, and initial instructions.
- */
-void showGreeting() {
-    cout << "=====================================\n";
-    cout << "          CSOPESY OS Emulator        \n";
-    cout << "=====================================\n";
-    cout << "Welcome to CSOPESY Emulator!\n";
-    cout << "Developers:\n";
-    cout << "Alonzo, John Leomarc\n";
-    cout << "Labarrete, Lance\n";
-    cout << "Soan, Brent Jan\n";
-    cout << "Tan, Anthony Andrei C.\n";
-    cout << "Last updated: November 3, 2025\n";
-    cout << "-------------------------------------\n";
-    cout << "Type 'initialize' to start, or 'help' for commands.\n\n";
-}
-
-/**
- * @brief Display available commands and usage
- * 
- * Shows list of all supported commands with brief descriptions.
- */
-void showHelp() {
-    cout << "\nAvailable Commands:\n";
-    cout << "==================\n";
-    cout << "initialize            - Load config.txt and start scheduler\n";
-    cout << "screen -s <name>      - Create new process with given name\n";
-    cout << "screen -r <name>      - Attach to process console\n";
-    cout << "screen -ls            - List all processes and their states\n";
-    cout << "scheduler-start       - Begin periodic process generation\n";
-    cout << "scheduler-stop        - Stop periodic process generation\n";
-    cout << "report-util           - Display CPU utilization report\n";
-    cout << "help                  - Show this help message\n";
-    cout << "exit                  - Exit emulator\n";
-    cout << "\nInside process screen:\n";
-    cout << "  process-smi         - Show process info and variables\n";
-    cout << "  exit                - Return to main menu\n\n";
-}
-
-/**
- * @brief Trim leading whitespace from string (in-place)
- * @param s String to modify
- * 
- * Removes all leading spaces, tabs, newlines, etc.
+ * @brief Trim leading spaces
  */
 void trimLeadingSpaces(string& s) {
     size_t i = 0;
@@ -157,345 +93,320 @@ void trimLeadingSpaces(string& s) {
 }
 
 /**
- * @brief Parse user input into command and parameter
- * @param input Raw input line from user
- * @return Pair of (command, parameter)
- * 
- * Example:
- *   "screen -s process1" -> ("screen", "-s process1")
- *   "initialize" -> ("initialize", "")
+ * @brief Parse top-level command
  */
 pair<string, string> parseCommand(const string& input) {
     stringstream ss(input);
-    string command, param;
-    ss >> command;
-    getline(ss, param);
-    trimLeadingSpaces(param);
-    return make_pair(command, param);
+    string cmd, rest;
+    ss >> cmd;
+    getline(ss, rest);
+    trimLeadingSpaces(rest);
+    return { cmd, rest };
 }
 
-/**
- * @brief Read and parse config.txt into global Config struct
- * @param configFile Open file stream to config.txt
- * 
- * Expected format (one key-value pair per line):
- *   num-cpu <value>
- *   scheduler <fcfs|rr>
- *   quantum-cycles <value>
- *   batch-process-freq <value>
- *   min-ins <value>
- *   max-ins <value>
- *   delays-per-exec <value>
- * 
- * Unknown keys are skipped with a warning.
- * See specs pg. 4-5 for parameter ranges.
- */
-void initializeConfig(ifstream& configFile) {
-    string key;
+// ============================================================================
+// UI / Help
+// ============================================================================
 
-    while (configFile >> key) {
-        if (key == "num-cpu") {
-            configFile >> config.numCPU;
-            // Resize CPU core array (thread-safe via mutex)
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            cpu_cores.resize(config.numCPU);
-        } 
-        else if (key == "scheduler") {
-            configFile >> config.scheduler;
-        } 
-        else if (key == "quantum-cycles") {
-            configFile >> config.quantumCycles;
-        } 
-        else if (key == "batch-process-freq") {
-            configFile >> config.batchProcessFreq;
-        } 
-        else if (key == "min-ins") {
-            configFile >> config.minIns;
-        } 
-        else if (key == "max-ins") {
-            configFile >> config.maxIns;
-        } 
-        else if (key == "delays-per-exec") {
-            configFile >> config.delaysPerExec;
-        } 
+void showGreeting() {
+    cout << "=====================================\n";
+    cout << "          CSOPESY OS Emulator        \n";
+    cout << "=====================================\n";
+    cout << "Type 'initialize' to start or 'help' for commands.\n\n";
+}
+
+void showHelp() {
+    cout << "\nAvailable Commands\n";
+    cout << "------------------\n";
+    cout << "initialize\n";
+    cout << "screen -s <name>\n";
+    cout << "screen -c <name> <memsize> \"<instructions>\"\n";
+    cout << "screen -r <name>\n";
+    cout << "screen -ls\n";
+    cout << "scheduler-start\n";
+    cout << "scheduler-stop\n";
+    cout << "report-util\n";
+    cout << "exit\n\n";
+
+    cout << "Inside screen:\n";
+    cout << "  process-smi\n";
+    cout << "  exit\n\n";
+}
+
+// ============================================================================
+// Config Loader
+// ============================================================================
+
+void initializeConfig(ifstream& file) {
+    string key;
+    while (file >> key) {
+        if (key == "num-cpu")              file >> config.numCPU;
+        else if (key == "scheduler")       file >> config.scheduler;
+        else if (key == "quantum-cycles")  file >> config.quantumCycles;
+        else if (key == "batch-process-freq") file >> config.batchProcessFreq;
+        else if (key == "min-ins")         file >> config.minIns;
+        else if (key == "max-ins")         file >> config.maxIns;
+        else if (key == "delays-per-exec") file >> config.delaysPerExec;
         else {
-            // Skip unknown keys (consume value token and continue)
-            string skip;
-            configFile >> skip;
-            cout << "WARNING: Unknown key '" << key << "', skipping value '" << skip << "'" << endl;
+            string dummy;
+            file >> dummy;
         }
     }
 }
 
-/**
- * @brief Validate configuration parameters against specs
- * @param config Configuration to validate
- * @return true if all parameters are within valid ranges
- * 
- * Validation rules (specs pg. 4-5):
- * - numCPU: [1, 128]
- * - scheduler: "fcfs" or "rr"
- * - quantumCycles: >= 1
- * - batchProcessFreq: >= 1
- * - minIns: >= 1
- * - maxIns: >= minIns
- * - delaysPerExec: [0, 2^32] (automatically valid for uint32_t)
- */
-bool isValidConfig(const Config& config) {
-    if (config.numCPU < 1 || config.numCPU > 128)
-        return false;
-    if (config.scheduler != "fcfs" && config.scheduler != "rr")
-        return false;
-    if (config.quantumCycles < 1u)
-        return false;
-    if (config.batchProcessFreq < 1u)
-        return false;
-    if (config.minIns < 1u || config.maxIns < config.minIns)
-        return false;
+bool isValidConfig(const Config& cfg) {
+    if (cfg.numCPU < 1) return false;
+    if (cfg.scheduler != "fcfs" && cfg.scheduler != "rr") return false;
+    if (cfg.quantumCycles < 1) return false;
+    if (cfg.batchProcessFreq < 1) return false;
+    if (cfg.minIns < 1 || cfg.maxIns < cfg.minIns) return false;
     return true;
 }
 
+bool isPowerOfTwo(uint32_t x) {
+    return x && !(x & (x - 1));
+}
+
 // ============================================================================
-// Command handlers
+// Screen Command
 // ============================================================================
 
-/**
- * @brief Handle screen command with subcommands
- * @param param The parameter string (e.g., "-s name", "-r name", "-ls")
- * 
- * Subcommands:
- * - screen -s <name>: Create new process with hardcoded test instructions
- * - screen -r <name>: Attach to process console (mini REPL)
- * - screen -ls: List all processes with CPU utilization
- */
 void handleScreenCommand(const string& param) {
-    auto [subcommand, subparam] = parseCommand(param);
+    auto [sub, rest] = parseCommand(param);
 
-    // screen -s <name>: Create new process manually
-    if (subcommand == "-s") {
-        // Clear console contents per specs pg. 3
-        system("cls");
-        
-        Process newP(next_process_id++, subparam, 10);
-        newP.instructions = {
-            //{"DECLARE", {"x","10"}},
-            //{"DECLARE", {"y","5"}},
-            //{"DECLARE", {"counter","0"}},
-            //{"FOR", {"3", "3"}},              // Loop 3 times over next 3 instructions
-            //{"ADD", {"x","x","y"}},           // x = x + y
-            //{"ADD", {"counter","counter","1"}},  // counter++
-            //{"PRINT", {"Iteration: +counter, x = +x"}},
-            //{"SUBTRACT", {"x","x","3"}},      // After loop: x = x - 3
-            //{"PRINT", {"Final: x = +x, counter = +counter"}},
-            //{"PRINT", {}}                      // Default message: "Hello world from [process]!"
-
-            // Test case 5
+    // ------------------------------------------------------------------------
+    // screen -s (auto-generated instructions)
+    // ------------------------------------------------------------------------
+    if (sub == "-s") {
+        Process p(next_process_id++, rest, 5);
+        p.instructions = {
             { "DECLARE", { "x", "0" } },
-            { "FOR", { std::to_string(config.minIns), "2" } },
-            { "PRINT", { "Value from: +x" } },
-            { "ADD", { "x", "x", std::to_string(rand() % 10 + 1) } },
+            { "ADD", { "x", "x", "1" } },
+            { "PRINT", { "x = +x" } }
         };
 
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        ready_queue.push_back(std::move(newP));
-        std::cout << "New process " << subparam << " created.\n";
+        lock_guard<mutex> lock(queue_mutex);
+        ready_queue.push_back(move(p));
+        cout << "Process " << rest << " created.\n";
     }
-    // screen -r <name>: Attach to process console
-    else if (subcommand == "-r") {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        Process* targetProc = find_process(subparam);
 
-        if (targetProc) {
-            // Clear console contents per specs pg. 3
-            system("cls");
-            
-            std::cout << "Attached to " << subparam << std::endl;
+    // ------------------------------------------------------------------------
+    // screen -c (user-defined instructions)
+    // ------------------------------------------------------------------------
+    else if (sub == "-c") {
+        string pname;
+        uint32_t memsize;
 
-            // Mini REPL inside process screen
-            std::string cmd;
-            while (true) {
-                std::cout << subparam << "> ";
-                getline(std::cin, cmd);
+        stringstream ss(rest);
+        ss >> pname >> memsize;
 
-                if (cmd == "process-smi") {
-                    // Display process state and variables (per specs pg. 3)
-                    std::cout << "Process: " << targetProc->name << "\n";
-                    std::cout << "Current instruction line: " << targetProc->current_instruction << "\n";
-                    std::cout << "Total lines of code: " << targetProc->total_instructions << "\n";
-                    
-                    // Print "Finished!" if process completed (specs pg. 3)
-                    if (targetProc->state == ProcessState::FINISHED) {
-                        std::cout << "Finished!\n";
-                    }
-                    
-                    std::cout << "\nVariables:\n";
-                    for (auto& kv : targetProc->memory)
-                        std::cout << "  " << kv.first << " = " << kv.second << "\n";
-                }
-                else if (cmd == "exit") {
-                    std::cout << "Returning to main menu...\n";
-                    break;
+        if (!ss || memsize < 64 || memsize > 65536 || !isPowerOfTwo(memsize)) {
+            cout << "invalid memory allocation\n";
+            return;
+        }
+
+        string code;
+        getline(ss, code);
+        trimLeadingSpaces(code);
+
+        if (code.size() < 2 || code.front() != '"' || code.back() != '"') {
+            cout << "invalid command\n";
+            return;
+        }
+
+        code = code.substr(1, code.size() - 2);
+
+        vector<string> lines;
+        string temp;
+        stringstream cs(code);
+        while (getline(cs, temp, ';')) {
+            trimLeadingSpaces(temp);
+            if (!temp.empty()) lines.push_back(temp);
+        }
+
+        if (lines.empty() || lines.size() > 50) {
+            cout << "invalid command\n";
+            return;
+        }
+
+        vector<Instruction> instructions;
+        for (const auto& line : lines) {
+            string op, restOp;
+            stringstream ls(line);
+            ls >> op;
+            getline(ls, restOp);
+            trimLeadingSpaces(restOp);
+
+            Instruction ins;
+            ins.op = op;
+
+            if (op == "PRINT") {
+                ins.args.push_back(restOp);
+            } else {
+                string arg;
+                stringstream as(restOp);
+                while (as >> arg) ins.args.push_back(arg);
+            }
+
+            // minimal operand validation
+            bool valid = true;
+            if (op == "DECLARE") valid = (ins.args.size() == 2);
+            else if (op == "ADD" || op == "SUBTRACT") valid = (ins.args.size() == 3);
+            else if (op == "SLEEP") valid = (ins.args.size() == 1);
+            else if (op == "FOR") valid = (ins.args.size() == 2);
+            else if (op == "READ" || op == "WRITE") valid = (ins.args.size() == 2);
+            else if (op == "PRINT") valid = true;
+            else valid = false;
+
+            if (!valid) {
+                cout << "invalid command\n";
+                return;
+            }
+
+            instructions.push_back(ins);
+        }
+
+        Process p(next_process_id++, pname,
+                  static_cast<uint32_t>(instructions.size()),
+                  memsize);
+        p.instructions = move(instructions);
+
+        lock_guard<mutex> lock(queue_mutex);
+        ready_queue.push_back(move(p));
+
+        cout << "Process " << pname << " created.\n";
+    }
+
+    // ------------------------------------------------------------------------
+    // screen -r (attach)
+    // ------------------------------------------------------------------------
+    else if (sub == "-r") {
+        lock_guard<mutex> lock(queue_mutex);
+        Process* p = find_process(rest);
+
+        if (!p) {
+            cout << "process not found\n";
+            return;
+        }
+
+        cout << "Attached to " << p->name << "\n";
+        string cmd;
+        while (true) {
+            cout << p->name << "> ";
+            getline(cin, cmd);
+
+            if (cmd == "process-smi") {
+                cout << "PID: " << p->id << "\n";
+                cout << "State: ";
+
+                if (p->state == ProcessState::READY) cout << "READY\n";
+                else if (p->state == ProcessState::RUNNING) cout << "RUNNING\n";
+                else if (p->state == ProcessState::SLEEPING) cout << "SLEEPING\n";
+                else if (p->state == ProcessState::FINISHED) cout << "FINISHED\n";
+                else if (p->state == ProcessState::MEMORY_VIOLATED) cout << "MEMORY-VIOLATED\n";
+
+                cout << "Instruction: " << p->current_instruction
+                     << "/" << p->total_instructions << "\n";
+
+                cout << "\nVariables:\n";
+                for (auto& kv : p->memory)
+                    cout << "  " << kv.first << " = " << kv.second << "\n";
+
+                cout << "\nExecution log:\n";
+                int shown = 0;
+                for (auto it = p->exec_log.rbegin();
+                     it != p->exec_log.rend() && shown < 10;
+                     ++it, ++shown) {
+                    cout << "  " << *it << "\n";
                 }
             }
-        }
-        else {
-            std::cout << "Error: Process " << subparam << " not found.\n";
+            else if (cmd == "exit") break;
         }
     }
-    // screen -ls: List all processes
-    else if (subcommand == "-ls") {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        
-        auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
-        
-        std::cout << "CPU utilization: " << std::fixed << std::setprecision(2) 
-                  << cpuUtilization << "%\n";
-        std::cout << "Cores used: " << coresUsed << "\n";
-        std::cout << "Cores available: " << coresAvailable << "\n\n";
-        
-        std::cout << "Processes:\n";
-        std::cout << generate_process_list();
+
+    // ------------------------------------------------------------------------
+    // screen -ls
+    // ------------------------------------------------------------------------
+    else if (sub == "-ls") {
+        auto [used, avail, util] = calculate_cpu_utilization();
+        cout << "CPU Utilization: " << fixed << setprecision(2) << util << "%\n";
+        cout << "Processes:\n" << generate_process_list();
     }
 }
 
-/**
- * @brief Handle report-util command
- * 
- * Generates CPU utilization report and saves to csopesy-log.txt.
- * Includes cores used/available, utilization percentage, and process list.
- */
+// ============================================================================
+// report-util
+// ============================================================================
+
 void handleReportUtil() {
-    if (verboseMode) cout << "[DEBUG] Generating report..." << endl;
+    ofstream out("csopesy-log.txt");
+    auto [used, avail, util] = calculate_cpu_utilization();
 
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    std::ofstream log("csopesy-log.txt");
+    out << "CPU Utilization: " << util << "%\n";
+    out << generate_process_list();
+    out.close();
 
-    auto [coresUsed, coresAvailable, cpuUtilization] = calculate_cpu_utilization();
-    
-    log << "CPU utilization: " << std::fixed << std::setprecision(2) 
-        << cpuUtilization << "%\n";
-    log << "Cores used: " << coresUsed << "\n";
-    log << "Cores available: " << coresAvailable << "\n\n";
-    
-    log << "Processes:\n";
-    log << generate_process_list();
-
-    log.close();
-    
-    std::cout << "Report saved to csopesy-log.txt\n";
+    cout << "Report saved.\n";
 }
 
-/**
- * @brief Process and execute user commands
- * @param command Primary command (e.g., "initialize", "screen")
- * @param param Command parameter (e.g., "-s process1")
- * @param isRunning Reference to main loop flag (set false to exit)
- * 
- * Enforces initialization gating: all commands except 'initialize' and 'exit'
- * are blocked until isInitialized is true.
- * 
- * Screen subcommands:
- * - screen -s <name>: Create new process with hardcoded test instructions
- * - screen -r <name>: Attach to process (searches ready/sleeping/running queues, not finished)
- * - screen -ls: List all processes with their states (ready/running/sleeping/finished)
- * 
- * See specs pg. 1-2 for command descriptions.
- */
-void handleCommand(const string command, const string param, bool& isRunning) {
-    // Initialization guard (specs requirement)
-    if (!isInitialized && command != "initialize" && command != "exit" && command != "help") {
-        cout << "Error: Emulator not initialized. Please run 'initialize' first." << endl;
+// ============================================================================
+// Command Dispatcher
+// ============================================================================
+
+void handleCommand(const string& cmd, const string& rest, bool& running) {
+    if (!isInitialized && cmd != "initialize" && cmd != "exit" && cmd != "help") {
+        cout << "Emulator not initialized.\n";
         return;
     }
-    
-    if (command == "exit") {
-        cout << "Exiting CSOPESY Emulator..." << endl;
-        isRunning = false;
-    }
-    else if (command == "help") {
-        showHelp();
-    }
-    else if (command == "initialize") {
-        // Prevent double initialization
-        if (isInitialized) {
-            cout << "Emulator is already initialized." << endl;
+
+    if (cmd == "exit") running = false;
+    else if (cmd == "help") showHelp();
+    else if (cmd == "initialize") {
+        ifstream cfg("config.txt");
+        if (!cfg.is_open()) {
+            cout << "config.txt not found\n";
             return;
         }
 
-        // Load config.txt
-        if (verboseMode) cout << "[DEBUG] Reading config.txt..." << endl;
-        ifstream configFile("config.txt");
-        if (!configFile.is_open()) {
-            cout << "Error: config.txt not found!" << endl;
-            return;
-        }
-        initializeConfig(configFile);
-        configFile.close();
+        initializeConfig(cfg);
+        cfg.close();
 
-        // Validate configuration
         if (!isValidConfig(config)) {
-            cout << "Error: Invalid configuration parameters!" << endl;
+            cout << "Invalid config\n";
             return;
         }
 
-        // Mark initialized and start background scheduler
         isInitialized = true;
-        cout << "Configuration loaded successfully." << endl;
-        
-        // Seed RNG before starting scheduler thread
-        srand(static_cast<unsigned int>(time(nullptr)));
+        cpu_cores.resize(config.numCPU);
+        srand(static_cast<unsigned>(time(nullptr)));
         start_scheduler_thread();
+
+        cout << "Initialized.\n";
     }
-    else if (command == "screen") {
-        handleScreenCommand(param);
-    }
-    else if (command == "scheduler-start") {
-        if (verboseMode) cout << "[DEBUG] Starting scheduler..." << endl;
-        start_process_generation();
-        cout << "Process generation started." << endl;
-    }
-    else if (command == "scheduler-stop") {
-        if (verboseMode) cout << "[DEBUG] Stopping scheduler..." << endl;
-        stop_process_generation();
-        cout << "Process generation stopped." << endl;
-    }
-    else if (command == "report-util") {
-        handleReportUtil();
-    }
-    else {
-        cout << "Unknown command: " << command << endl;
-    }
+    else if (cmd == "screen") handleScreenCommand(rest);
+    else if (cmd == "scheduler-start") start_process_generation();
+    else if (cmd == "scheduler-stop") stop_process_generation();
+    else if (cmd == "report-util") handleReportUtil();
+    else cout << "Unknown command\n";
 }
 
 // ============================================================================
-// Main entry point
+// main()
 // ============================================================================
 
-/**
- * @brief Main program loop
- * 
- * Displays greeting, then enters command loop:
- * 1. Display prompt ("> ")
- * 2. Read user input
- * 3. Parse command and parameter
- * 4. Execute command via handleCommand()
- * 5. Repeat until isRunning is false
- */
 int main() {
-    bool isRunning = true;
-    string input;
-
     showGreeting();
 
-    while (isRunning) {
+    bool running = true;
+    string input;
+
+    while (running) {
         cout << "> ";
         getline(cin, input);
+        if (input.empty()) continue;
 
-        if (input.empty()) 
-            continue;
-
-        auto [command, param] = parseCommand(input);
-        handleCommand(command, param, isRunning);
+        auto [cmd, rest] = parseCommand(input);
+        handleCommand(cmd, rest, running);
     }
 
     return 0;

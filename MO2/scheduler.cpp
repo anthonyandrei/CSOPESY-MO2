@@ -10,6 +10,7 @@
 #include <iostream>
 #include <random>
 #include <sstream>
+#include <cctype>
 
 // External references from main.cpp
 extern Config config;
@@ -22,7 +23,7 @@ extern bool verboseMode;
 constexpr int UINT16_MAX_VALUE = 65535;                 ///< Maximum value for uint16 variables
 constexpr int UINT16_MIN_VALUE = 0;                     ///< Minimum value for uint16 variables
 constexpr int MAX_FOR_LOOP_DEPTH = 3;                   ///< Maximum FOR loop nesting depth per specs pg. 3
-constexpr int NUM_INSTRUCTION_TYPES = 7;                ///< Number of instruction types (PRINT, DECLARE, ADD, SUBTRACT, SLEEP, READ, WRITE)
+constexpr int NUM_INSTRUCTION_TYPES = 7;                ///< Num...uction types (PRINT, DECLARE, ADD, SUBTRACT, SLEEP, READ, WRITE)
 constexpr int NUM_INSTRUCTION_TYPES_WITH_FOR = 6;       ///< Number of instruction types including FOR
 constexpr int FOR_LOOP_PROBABILITY = 10;                ///< 1 in N chance to generate a FOR loop
 constexpr int MIN_FOR_ITERATIONS = 2;                   ///< Minimum FOR loop iterations
@@ -35,9 +36,11 @@ constexpr int MAX_ARITHMETIC_OPERAND = 50;              ///< Maximum random valu
 constexpr int MIN_SLEEP_TICKS = 1;                      ///< Minimum sleep duration in CPU ticks
 constexpr int MAX_SLEEP_TICKS = 10;                     ///< Maximum sleep duration in CPU ticks
 constexpr int PROBABILITY_DENOMINATOR = 2;              ///< Denominator for 50% probability checks
-constexpr int REQUIRED_OPERANDS_FOR_ARITHMETIC = 3;     ///< Required operand count for ADD/SUBTRACT
-constexpr int CPU_TICK_DELAY_MS = 100;                  ///< Real-time delay per CPU tick in milliseconds
-constexpr int MAX_MEMORY_SIZE = 4096;                   ///< max memory size for hex address generation (Using 4096 as a dummy max memory size for now)
+constexpr int MAX_MEMORY_SIZE = 4096;                   ///< Max address space for auto-generated READ/WRITE
+constexpr uint32_t SYMBOL_TABLE_BYTES = 64;             ///< Fixed symbol-table size in bytes
+constexpr uint32_t BYTES_PER_UINT16 = 2;                ///< Size of one uint16 variable in bytes
+constexpr int REQUIRED_OPERANDS_FOR_ARITHMETIC = 3;     ///< Number of operands required for ADD/SUBTRACT
+constexpr int CPU_TICK_DELAY_MS = 100;                  ///< Real-time delay per CPU tick (in ms)
 
 std::atomic<uint64_t> global_cpu_tick(0);               ///< Global CPU tick counter
 std::atomic<bool> is_generating_processes(false);       ///< True when scheduler-start is active
@@ -83,6 +86,20 @@ std::string generate_process_name(int pid) {
 }
 
 /**
+ * @brief Append a message to the per-process execution log.
+ */
+void log_event(Process& p, uint64_t tick, const std::string& msg) {
+    std::ostringstream oss;
+    oss << "[" << tick << "] " << msg;
+    p.exec_log.push_back(oss.str());
+
+    // Optional: cap log size to avoid unbounded growth
+    if (p.exec_log.size() > 500) {
+        p.exec_log.erase(p.exec_log.begin());
+    }
+}
+
+/**
  * @brief Process PRINT message with variable concatenation
  * @param message Template message with +varname patterns
  * @param p Process with memory context
@@ -104,7 +121,7 @@ std::string process_print_message(std::string message, Process& p) {
         // Find the end of the variable name (alphanumeric + underscore)
         // Stops at first non-identifier character (space, comma, etc.)
         while (varEnd < message.length() && 
-               (std::isalnum(message[varEnd]) || message[varEnd] == '_')) {
+               (std::isalnum(static_cast<unsigned char>(message[varEnd])) || message[varEnd] == '_')) {
             varEnd++;
         }
         
@@ -140,45 +157,77 @@ int clamp_to_uint16(int value) {
 }
 
 /**
+ * @brief Ensure a variable has space in the 64-byte symbol table.
+ *        Returns false if the table is already full.
+ */
+bool ensure_symbol_table_slot(Process& p, const std::string& varName) {
+    // Already present
+    if (p.memory.find(varName) != p.memory.end()) {
+        return true;
+    }
+
+    // Check if there is enough space for one more uint16 (2 bytes)
+    if (p.symbol_table_bytes_used + BYTES_PER_UINT16 > SYMBOL_TABLE_BYTES) {
+        if (verboseMode) {
+            std::cout << "[" << p.name << "] WARNING: symbol table full, ignoring variable '"
+                      << varName << "'\n";
+        }
+        return false;
+    }
+
+    p.symbol_table_bytes_used += BYTES_PER_UINT16;
+    p.memory[varName] = 0; // initialize to 0
+    return true;
+}
+
+/**
  * @brief Get value of an operand (variable or literal)
  * @param operand String containing variable name or numeric literal
  * @param p Process with memory context
  * @return Resolved integer value
  */
 int get_operand_value(const std::string& operand, Process& p) {
+    if (operand.empty()) return 0;
+
     // Check if it's a numeric literal (e.g., "42" or "-5")
     // Must start with digit, or '-' followed by at least one digit
-    if (std::isdigit(operand[0]) || (operand[0] == '-' && operand.length() > 1)) {
+    if (std::isdigit(static_cast<unsigned char>(operand[0])) ||
+        (operand[0] == '-' && operand.length() > 1)) {
         return std::stoi(operand);
     }
     
-    // It's a variable - auto-initialize to 0 if not declared
-    if (p.memory.find(operand) == p.memory.end()) {
-        p.memory[operand] = 0;
+    // It's a variable - allocate symbol-table slot if possible
+    if (!ensure_symbol_table_slot(p, operand)) {
+        // Symbol table full; treat as 0 but do not store
+        return 0;
     }
     return p.memory[operand];
 }
 
 /**
- * @brief Generate random operand (50% variable, 50% literal)
- * @param var_pool Pool of variable names to choose from
- * @param max_literal Maximum value for literal operands
- * @return String containing either a variable name or numeric literal
+ * @brief Generate random operand (50% chance of variable, 50% numeric literal)
+ * @param var_pool Vector of available variable names
+ * @param max_literal Maximum value for numeric literal
+ * @return Operand string (either variable name or numeric literal)
  */
 std::string generate_random_operand(const std::vector<std::string>& var_pool, int max_literal) {
-    // 50% chance: return variable, 50% chance: return literal
-    return (rand() % 2 == 0) 
-        ? var_pool[rand() % var_pool.size()]
-        : std::to_string(rand() % max_literal);
+    if (var_pool.empty() || rand() % PROBABILITY_DENOMINATOR == 0) {
+        // Generate numeric literal
+        return std::to_string(rand() % max_literal);
+    } else {
+        // Pick random variable from pool
+        return var_pool[rand() % var_pool.size()];
+    }
 }
 
 /**
  * @brief Execute arithmetic operation (ADD or SUBTRACT)
- * @param p Process to execute on
+ * @param p Process containing variables
  * @param ins Instruction with operands
- * @param is_add True for addition, false for subtraction
+ * @param is_add True for ADD, false for SUBTRACT
  */
 void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
+    // ADD/SUBTRACT require 3 operands: var1, var2, var3/numeric
     if (ins.args.size() < REQUIRED_OPERANDS_FOR_ARITHMETIC) {
         if (verboseMode)
             std::cout << "[" << p.name << "] ERROR: " << ins.op 
@@ -187,6 +236,12 @@ void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
     }
     
     std::string var1 = ins.args[0];
+
+    // Ensure destination variable has space in symbol table
+    if (!ensure_symbol_table_slot(p, var1)) {
+        return; // symbol table full, ignore operation
+    }
+
     int value2 = get_operand_value(ins.args[1], p);
     int value3 = get_operand_value(ins.args[2], p);
     
@@ -194,23 +249,35 @@ void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
     p.memory[var1] = clamp_to_uint16(result);
 }
 
+/**
+ * @brief Parse a hexadecimal address token (expects 0x prefix).
+ * @return true on success, false on invalid hex.
+ */
+bool parse_hex_address(const std::string& token, uint32_t& out) {
+    if (token.size() < 3) return false;
+    if (!(token[0] == '0' && (token[1] == 'x' || token[1] == 'X'))) {
+        return false;
+    }
+
+    for (size_t i = 2; i < token.size(); ++i) {
+        if (!std::isxdigit(static_cast<unsigned char>(token[i]))) {
+            return false;
+        }
+    }
+
+    try {
+        unsigned long val = std::stoul(token, nullptr, 16);
+        out = static_cast<uint32_t>(val);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 // ============================================================================
 // Process generation
 // ============================================================================
 
-/**
- * @brief Generate a new process with random instruction count
- * 
- * Creates a process with [minIns, maxIns] instructions (random).
- * Process name follows pattern: p01, p02, ..., p1240
- * New process is added to ready_queue.
- * 
- * Can generate FOR loops with format: FOR(repeats, block_size).
- * Respects MAX_FOR_LOOP_DEPTH nesting limit.
- * 
- * Called by scheduler_loop() every batchProcessFreq ticks when
- * is_generating_processes is true.
- */
 void generate_new_process() {
     // Get instruction count range from config
     uint32_t min_ins = config.minIns;
@@ -227,28 +294,26 @@ void generate_new_process() {
 
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
-            << " (" << num_instructions << " instructions)." << std::endl;
+                  << " (" << num_instructions << " instructions)." << std::endl;
     }
 
-    // Create the process
+    // Create process and reserve memory
     Process p(pid, pname, num_instructions);
-    
-    // Variable pool for instruction generation
-    std::vector<std::string> var_pool = {"x", "y", "z", "counter", "sum", "temp", "result", "value"};
-    
-    // Generate instructions in a flat loop with FOR(repeats, block_size) format
-    // Note: FOR instructions don't execute themselves, they control execution of following instructions
-    for (uint32_t i = 0; i < num_instructions; i++) {
+
+    // Prepopulate some variables for use in instructions
+    std::vector<std::string> var_pool = { "x", "y", "z", "counter" };
+
+    // Generate instruction list
+    for (uint32_t i = 0; i < num_instructions; ++i) {
         Instruction ins;
-        
-        // 10% chance of FOR if we have room for loop body
-        // remaining_instructions = instructions after current position (not including current)
+
+        // Check if we can generate a FOR loop (must have enough remaining instructions)
         uint32_t remaining_instructions = num_instructions - i - 1;
-        bool can_generate_for = remaining_instructions >= MIN_FOR_BODY_SIZE &&
-                                rand() % FOR_LOOP_PROBABILITY == 0;
-        
+        bool can_generate_for = (remaining_instructions >= MIN_FOR_BODY_SIZE) &&
+                                (rand() % FOR_LOOP_PROBABILITY == 0);
+
         if (can_generate_for) {
-            // Generate FOR instruction with block_size
+            // Generate FOR loop header
             ins.op = "FOR";
             
             // Random iteration count
@@ -309,7 +374,8 @@ void generate_new_process() {
         p.instructions.push_back(ins);
     }
 
-    // Add to ready queue (thread-safe)
+    
+    // Add process to ready queue
     std::lock_guard<std::mutex> lock(queue_mutex);
     ready_queue.push_back(std::move(p));
 }
@@ -319,10 +385,7 @@ void generate_new_process() {
 // ============================================================================
 
 /**
- * @brief Wake up sleeping processes whose timers have expired
- * 
- * Scans sleeping_queue and moves processes with sleep_until_tick <= current_tick
- * back to ready_queue. Called once per CPU tick.
+ * @brief Move processes from sleeping_queue to ready_queue when their sleep expires
  */
 void check_sleeping() {
     std::lock_guard<std::mutex> lock(queue_mutex);
@@ -332,24 +395,23 @@ void check_sleeping() {
     auto it = sleeping_queue.begin();
     while (it != sleeping_queue.end()) {
         if (current_tick >= it->sleep_until_tick) {
-            if (verboseMode) 
-                std::cout << "\n[Scheduler] Process " << it->name << " is WAKING UP." << std::endl;
-            
+            // Move process back to ready state
+            if (verboseMode)
+                std::cout << "\n[Scheduler] Process " << it->name 
+                          << " is WAKING UP." << std::endl;
+
             it->state = ProcessState::READY;
             ready_queue.push_back(std::move(*it));
             it = sleeping_queue.erase(it);
-        }
-        else {
+        } else {
             ++it;
         }
     }
 }
 
 /**
- * @brief Dispatch ready processes to idle CPU cores
+ * @brief Dispatch ready processes to available CPU cores
  * 
- * Assigns processes from ready_queue to cpu_cores with no active process.
- * For FCFS: process runs until completion or sleep.
  * For RR: process quantum is set to quantumCycles.
  * 
  * Pops from front of ready_queue (FIFO order).
@@ -367,40 +429,36 @@ void dispatch_processes() {
             Process p = std::move(ready_queue.front());
             ready_queue.pop_front();
 
+            // Set process state and initialize quantum
             p.state = ProcessState::RUNNING;
 
-            // Set quantum for Round Robin
             if (config.scheduler == "rr") {
                 p.quantum_ticks_left = config.quantumCycles;
             }
 
-            if (verboseMode) 
+            if (verboseMode)
                 std::cout << "\n[Scheduler] DISPATCHING " << p.name 
                           << " to CPU " << i << "." << std::endl;
-            
+
+            // Assign to CPU core
             cpu_cores[i] = std::move(p);
 
-            // Stop if no more ready processes
+            // Stop if there are no more ready processes
             if (ready_queue.empty()) {
                 break;
             }
         }
     }
 }
+
 // ============================================================================
 // CPU execution
 // ============================================================================
 
 /**
- * @brief Execute one CPU tick for all running processes
+ * @brief Execute one CPU tick across all cores
  * 
- * For each occupied CPU core:
- * 1. Check if instruction page is resident (future memory manager integration)
- * 2. Execute one instruction via execute_instruction()
- * 3. Check if process finished, memory violated, or sleeping (if so, remove from core)
- * 4. For RR: decrement quantum, preempt if quantum expires
- * 
- * Called once per scheduler loop iteration (every 100ms real time).
+ * Handles RR quantum, sleep transitions, and process completion.
  */
 void execute_cpu_tick() {
     std::lock_guard<std::mutex> lock(queue_mutex);
@@ -438,14 +496,20 @@ void execute_cpu_tick() {
             }
             
             if (p.state == ProcessState::SLEEPING) {
+                
                 sleeping_queue.push_back(std::move(p));
                 cpu_cores[i].reset();
                 continue;
             }
 
-            // Round Robin quantum management
+            // Handle RR quantum for RUNNING process
             if (config.scheduler == "rr") {
-                p.quantum_ticks_left--;
+                // Decrement quantum per tick
+                if (p.quantum_ticks_left > 0) {
+                    p.quantum_ticks_left--;
+                }
+
+                // If quantum expires, preempt the process
                 if (p.quantum_ticks_left == 0) {
                     if (verboseMode) 
                         std::cout << "\n[Scheduler] Process " << p.name 
@@ -464,28 +528,6 @@ void execute_cpu_tick() {
 // Instruction execution
 // ============================================================================
 
-/**
- * @brief Execute one instruction of a process
- * @param p Process to execute (modified in-place)
- * @param current_tick Current global CPU tick
- * 
- * Executes p.instructions[p.current_instruction] and updates state.
- * Supported instructions:
- * - PRINT <message>: Output message to console (supports variable concatenation: +varname)
- * - DECLARE <var> <value>: Initialize variable
- * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
- * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
- * - SLEEP <ticks>: Block process for <ticks> CPU ticks (sets state to SLEEPING)
- * - READ <var> <address>: Read from memory address into variable
- * - WRITE <address> <var/value>: Write variable or value to memory address
- * - FOR <iterations> <block_size>: Loop control
- * 
- * Variables are stored in p.memory (uint16 clamped to [0, 65535]).
- * Undeclared variables auto-initialize to 0.
- * 
- * When process completes, sleeps, or encounters memory violation, only the state is updated.
- * Caller (execute_cpu_tick) is responsible for moving process to appropriate queue.
- */
 void execute_instruction(Process& p, uint64_t current_tick) {
     // Implement delays-per-exec: busy-wait before executing instruction
     if (p.delay_ticks_left > 0) {
@@ -495,31 +537,48 @@ void execute_instruction(Process& p, uint64_t current_tick) {
 
     // Check if all instructions completed
     if (p.current_instruction >= p.instructions.size()) {
-        if (verboseMode) 
+        if (verboseMode)
             std::cout << "\n[Scheduler] Process " << p.name << " FINISHED." << std::endl;
-        
+
         p.state = ProcessState::FINISHED;
         return;  // Caller will move to finished_queue and reset core
     }
 
+    // Fetch current instruction
     Instruction& ins = p.instructions[p.current_instruction];
+
+    // Log the instruction before execution (for process-smi)
+    {
+        std::ostringstream oss;
+        oss << "EXEC " << ins.op;
+        for (const auto& a : ins.args) {
+            oss << " " << a;
+        }
+        log_event(p, current_tick, oss.str());
+    }
 
     // Execute instruction based on operation
     if (ins.op == "PRINT") {
         // PRINT instruction can handle variable concatenation: PRINT ("Value from: " +x)
         // If no argument provided, use default message
-        std::string message = ins.args.empty() 
-            ? "Hello world from " + p.name + "!" 
+        std::string message = ins.args.empty()
+            ? "Hello world from " + p.name + "!"
             : ins.args[0];
-        
+
         // Process variable concatenation (+varname patterns)
         message = process_print_message(message, p);
         std::cout << "[" << p.name << "] " << message << std::endl;
     }
     else if (ins.op == "DECLARE") {
         // Initialize variable and clamp to uint16 range [0, 65535]
-        int value = std::stoi(ins.args[1]);
-        p.memory[ins.args[0]] = clamp_to_uint16(value);
+        if (ins.args.size() >= 2) {
+            const std::string& varName = ins.args[0];
+            int value = std::stoi(ins.args[1]);
+
+            if (ensure_symbol_table_slot(p, varName)) {
+                p.memory[varName] = clamp_to_uint16(value);
+            }
+        }
     }
     else if (ins.op == "ADD") {
         execute_arithmetic(p, ins, true);
@@ -529,10 +588,65 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     }
     else if (ins.op == "SLEEP") {
         // Block process for specified ticks
-        p.state = ProcessState::SLEEPING;
-        p.sleep_until_tick = current_tick + std::stoi(ins.args[0]);
-        p.current_instruction++;  // Move to next instruction before sleeping
-        return;  // Caller will move to sleeping_queue and reset core
+        if (!ins.args.empty()) {
+            p.state = ProcessState::SLEEPING;
+            p.sleep_until_tick = current_tick + std::stoi(ins.args[0]);
+            p.current_instruction++;  // Move to next instruction before sleeping
+            return;  // Caller will move to sleeping_queue and reset core
+        }
+    }
+    else if (ins.op == "READ") {
+        // READ <var> <hex_addr>
+        if (ins.args.size() < 2) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: READ requires 2 arguments (var, hex_addr)\n";
+        } else {
+            const std::string& varName = ins.args[0];
+            const std::string& addrToken = ins.args[1];
+            uint32_t addr = 0;
+
+            if (!parse_hex_address(addrToken, addr) || addr >= p.memory_size) {
+                log_event(p, current_tick, "FAULT: invalid READ address " + addrToken);
+                if (verboseMode)
+                    std::cout << "[" << p.name << "] MEMORY VIOLATION on READ at "
+                              << addrToken << " (mem size " << p.memory_size << ")\n";
+                p.state = ProcessState::MEMORY_VIOLATED;
+                return;
+            }
+
+            if (ensure_symbol_table_slot(p, varName)) {
+                uint16_t value = 0;
+                auto it = p.data_memory.find(addr);
+                if (it != p.data_memory.end()) {
+                    value = it->second;
+                }
+                p.memory[varName] = clamp_to_uint16(value);
+            }
+        }
+    }
+    else if (ins.op == "WRITE") {
+        // WRITE <hex_addr> <var/value>
+        if (ins.args.size() < 2) {
+            if (verboseMode)
+                std::cout << "[" << p.name << "] ERROR: WRITE requires 2 arguments (hex_addr, var/value)\n";
+        } else {
+            const std::string& addrToken = ins.args[0];
+            const std::string& valueToken = ins.args[1];
+            uint32_t addr = 0;
+
+            if (!parse_hex_address(addrToken, addr) || addr >= p.memory_size) {
+                log_event(p, current_tick, "FAULT: invalid WRITE address " + addrToken);
+                if (verboseMode)
+                    std::cout << "[" << p.name << "] MEMORY VIOLATION on WRITE at "
+                              << addrToken << " (mem size " << p.memory_size << ")\n";
+                p.state = ProcessState::MEMORY_VIOLATED;
+                return;
+            }
+
+            int raw = get_operand_value(valueToken, p);
+            uint16_t value = static_cast<uint16_t>(clamp_to_uint16(raw));
+            p.data_memory[addr] = value;
+        }
     }
     else if (ins.op == "FOR") {
         // FOR loop: Execute a block of instructions multiple times
@@ -609,6 +723,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     // Reset delay counter for next instruction (busy-wait per spec pg. 4)
     p.delay_ticks_left = config.delaysPerExec;
 }
+
 // ============================================================================
 // Scheduler main loop
 // ============================================================================
@@ -616,15 +731,8 @@ void execute_instruction(Process& p, uint64_t current_tick) {
 /**
  * @brief Main scheduler loop (runs in background thread)
  * 
- * Executes continuously after initialization:
- * 1. Increment global_cpu_tick
- * 2. Generate new process if is_generating_processes and time elapsed >= batchProcessFreq
- * 3. Wake up sleeping processes (check_sleeping)
- * 4. Execute one tick on all running processes (execute_cpu_tick)
- * 5. Dispatch ready processes to idle cores (dispatch_processes)
- * 6. Sleep 100ms (simulates CPU tick delay)
- * 
- * Only runs when isInitialized is true (guard exists for safety).
+ * Executes continuously after initialization. Handles process
+ * generation, sleep transitions, CPU execution, and dispatching.
  */
 void scheduler_loop() {
     uint64_t last_generation_tick = 0;
@@ -634,27 +742,22 @@ void scheduler_loop() {
             // Increment global CPU tick
             global_cpu_tick++;
             uint64_t current_tick = global_cpu_tick.load();
-            
-            // Count how many CPU cores are actively running processes
-            // This is used for CPU utilization metrics
+
+            // Track core utilization for reporting
             int active_cores = 0;
             {
-                // Lock to safely access cpu_cores vector
                 std::lock_guard<std::mutex> lock(queue_mutex);
-                for(const auto& core : cpu_cores) {
+                for (const auto& core : cpu_cores) {
                     if (core.has_value()) {
                         active_cores++;
                     }
                 }
             }
             
-            // Update CPU utilization statistics
-            // total_active_ticks tracks sum of all core-ticks spent executing
-            // total_idle_ticks tracks sum of all core-ticks spent idle
             total_active_ticks += active_cores;
             total_idle_ticks += (config.numCPU - active_cores);
 
-            // Periodic process generation
+            // Periodic process generation (scheduler-start)
             if (is_generating_processes.load() &&
                 (current_tick - last_generation_tick >= config.batchProcessFreq))
             {
@@ -673,24 +776,18 @@ void scheduler_loop() {
     }
 }
 
-// ============================================================================
-// Public API
-// ============================================================================
-
 /**
- * @brief Start background scheduler thread
- * 
- * Spawns detached thread running scheduler_loop().
- * Called once after successful initialization.
+ * @brief Start scheduler loop in a detached background thread
  */
 void start_scheduler_thread() {
-    std::thread(scheduler_loop).detach();
+    std::thread schedulerThread(scheduler_loop);
+    schedulerThread.detach();
 }
 
 /**
  * @brief Enable periodic process generation
  * 
- * Sets is_generating_processes flag. Processes are created
+ * When enabled, generate_new_process() is called automatically
  * every batchProcessFreq ticks in scheduler_loop().
  */
 void start_process_generation() {
