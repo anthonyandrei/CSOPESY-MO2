@@ -145,3 +145,12 @@ void stop_process_generation();
  * @param current_tick Current global CPU tick
  */
 void execute_instruction(Process& p, uint64_t current_tick);
+
+/**
+ * @brief Parse semicolon-separated command string into instruction vector
+ * @param commands String containing commands separated by semicolons
+ * @return Vector of parsed instructions
+ * 
+ * Example: "DECLARE x 5; ADD x x 1; PRINT" -> 3 instructions
+ */
+std::vector<Instruction> parse_command_string(const std::string& commands);

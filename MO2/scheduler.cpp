@@ -205,10 +205,10 @@ int get_operand_value(const std::string& operand, Process& p) {
 }
 
 /**
- * @brief Generate random operand (50% chance of variable, 50% numeric literal)
- * @param var_pool Vector of available variable names
- * @param max_literal Maximum value for numeric literal
- * @return Operand string (either variable name or numeric literal)
+ * @brief Generate random operand (50% variable, 50% literal)
+ * @param var_pool Pool of variable names to choose from
+ * @param max_literal Maximum value for literal operands
+ * @return String containing either a variable name or numeric literal
  */
 std::string generate_random_operand(const std::vector<std::string>& var_pool, int max_literal) {
     if (var_pool.empty() || rand() % PROBABILITY_DENOMINATOR == 0) {
@@ -222,9 +222,9 @@ std::string generate_random_operand(const std::vector<std::string>& var_pool, in
 
 /**
  * @brief Execute arithmetic operation (ADD or SUBTRACT)
- * @param p Process containing variables
+ * @param p Process to execute on
  * @param ins Instruction with operands
- * @param is_add True for ADD, false for SUBTRACT
+ * @param is_add True for addition, false for subtraction
  */
 void execute_arithmetic(Process& p, const Instruction& ins, bool is_add) {
     // ADD/SUBTRACT require 3 operands: var1, var2, var3/numeric
@@ -274,10 +274,117 @@ bool parse_hex_address(const std::string& token, uint32_t& out) {
     }
 }
 
+/**
+ * @brief Parse semicolon-separated command string into instruction vector
+ * @param commands String containing commands separated by semicolons
+ * @return Vector of parsed instructions
+ * 
+ * This function is used by the screen -c command to parse user-provided
+ * instruction strings. Each instruction is separated by a semicolon.
+ * 
+ * Example: "DECLARE x 5; ADD x x 1; PRINT +x"
+ * Results in 3 instructions:
+ *   1. DECLARE ["x", "5"]
+ *   2. ADD ["x", "x", "1"]
+ *   3. PRINT ["+x"]
+ */
+std::vector<Instruction> parse_command_string(const std::string& commands) {
+    std::vector<Instruction> result;
+    
+    if (commands.empty()) {
+        return result;
+    }
+    
+    // Split by semicolons
+    size_t start = 0;
+    size_t end = 0;
+    
+    while (end != std::string::npos) {
+        end = commands.find(';', start);
+        
+        // Extract one command (everything between start and end/EOF)
+        std::string cmd = (end == std::string::npos) 
+            ? commands.substr(start) 
+            : commands.substr(start, end - start);
+        
+        // Trim leading/trailing whitespace
+        size_t first = cmd.find_first_not_of(" \t\n\r");
+        if (first == std::string::npos) {
+            // Empty or whitespace-only command, skip
+            start = end + 1;
+            continue;
+        }
+        
+        size_t last = cmd.find_last_not_of(" \t\n\r");
+        cmd = cmd.substr(first, last - first + 1);
+        
+        if (cmd.empty()) {
+            start = end + 1;
+            continue;
+        }
+        
+        // Parse the command into tokens (split by spaces)
+        Instruction ins;
+        std::vector<std::string> tokens;
+        
+        size_t token_start = 0;
+        size_t token_end = 0;
+        
+        while (token_end != std::string::npos) {
+            token_end = cmd.find(' ', token_start);
+            
+            std::string token = (token_end == std::string::npos)
+                ? cmd.substr(token_start)
+                : cmd.substr(token_start, token_end - token_start);
+            
+            // Skip empty tokens (consecutive spaces)
+            if (!token.empty()) {
+                tokens.push_back(token);
+            }
+            
+            if (token_end != std::string::npos) {
+                token_start = token_end + 1;
+            }
+        }
+        
+        // First token is the operation
+        if (!tokens.empty()) {
+            ins.op = tokens[0];
+            
+            // Remaining tokens are arguments
+            for (size_t i = 1; i < tokens.size(); ++i) {
+                ins.args.push_back(tokens[i]);
+            }
+            
+            result.push_back(ins);
+        }
+        
+        // Move to next command
+        if (end != std::string::npos) {
+            start = end + 1;
+        }
+    }
+    
+    return result;
+}
+
 // ============================================================================
 // Process generation
 // ============================================================================
 
+/**
+ * @brief Generate a new process with random instruction count
+ * 
+ * Creates a process with [minIns, maxIns] instructions (random).
+ * Process name follows pattern: p01, p02, ..., p1240
+ * New process is added to ready_queue.
+ * 
+ * Can generate FOR loops with format: FOR(repeats, block_size).
+ * Respects MAX_FOR_LOOP_DEPTH nesting limit.
+ * 
+ * Called by scheduler_loop() every batchProcessFreq ticks when
+ * is_generating_processes is true.
+ */
 void generate_new_process() {
     // Get instruction count range from config
     uint32_t min_ins = config.minIns;
@@ -306,7 +413,7 @@ void generate_new_process() {
     // Generate instruction list
     for (uint32_t i = 0; i < num_instructions; ++i) {
         Instruction ins;
-
+        
         // Check if we can generate a FOR loop (must have enough remaining instructions)
         uint32_t remaining_instructions = num_instructions - i - 1;
         bool can_generate_for = (remaining_instructions >= MIN_FOR_BODY_SIZE) &&
@@ -374,7 +481,7 @@ void generate_new_process() {
         p.instructions.push_back(ins);
     }
 
-    
+
     // Add process to ready queue
     std::lock_guard<std::mutex> lock(queue_mutex);
     ready_queue.push_back(std::move(p));
@@ -385,7 +492,7 @@ void generate_new_process() {
 // ============================================================================
 
 /**
- * @brief Move processes from sleeping_queue to ready_queue when their sleep expires
+  * @brief Move processes from sleeping_queue to ready_queue when their sleep expires
  */
 void check_sleeping() {
     std::lock_guard<std::mutex> lock(queue_mutex);
@@ -432,11 +539,12 @@ void dispatch_processes() {
             // Set process state and initialize quantum
             p.state = ProcessState::RUNNING;
 
+            // Set quantum for Round Robin
             if (config.scheduler == "rr") {
                 p.quantum_ticks_left = config.quantumCycles;
             }
 
-            if (verboseMode)
+            if (verboseMode) 
                 std::cout << "\n[Scheduler] DISPATCHING " << p.name 
                           << " to CPU " << i << "." << std::endl;
 
@@ -450,15 +558,14 @@ void dispatch_processes() {
         }
     }
 }
-
 // ============================================================================
 // CPU execution
 // ============================================================================
 
 /**
- * @brief Execute one CPU tick across all cores
- * 
- * Handles RR quantum, sleep transitions, and process completion.
+  * @brief Execute one CPU tick across all cores
+  *  
+  * Handles RR quantum, sleep transitions, and process completion.
  */
 void execute_cpu_tick() {
     std::lock_guard<std::mutex> lock(queue_mutex);
@@ -496,7 +603,6 @@ void execute_cpu_tick() {
             }
             
             if (p.state == ProcessState::SLEEPING) {
-                
                 sleeping_queue.push_back(std::move(p));
                 cpu_cores[i].reset();
                 continue;
@@ -528,6 +634,28 @@ void execute_cpu_tick() {
 // Instruction execution
 // ============================================================================
 
+/**
+ * @brief Execute one instruction of a process
+ * @param p Process to execute (modified in-place)
+ * @param current_tick Current global CPU tick
+ * 
+ * Executes p.instructions[p.current_instruction] and updates state.
+ * Supported instructions:
+ * - PRINT <message>: Output message to console (supports variable concatenation: +varname)
+ * - DECLARE <var> <value>: Initialize variable
+ * - ADD <var1> <var2/value> <var3/value>: var1 = var2/value + var3/value
+ * - SUBTRACT <var1> <var2/value> <var3/value>: var1 = var2/value - var3/value
+ * - SLEEP <ticks>: Block process for <ticks> CPU ticks (sets state to SLEEPING)
+ * - READ <var> <address>: Read from memory address into variable
+ * - WRITE <address> <var/value>: Write variable or value to memory address
+ * - FOR <iterations> <block_size>: Loop control
+ * 
+ * Variables are stored in p.memory (uint16 clamped to [0, 65535]).
+ * Undeclared variables auto-initialize to 0.
+ * 
+ * When process completes, sleeps, or encounters memory violation, only the state is updated.
+ * Caller (execute_cpu_tick) is responsible for moving process to appropriate queue.
+ */
 void execute_instruction(Process& p, uint64_t current_tick) {
     // Implement delays-per-exec: busy-wait before executing instruction
     if (p.delay_ticks_left > 0) {
@@ -537,9 +665,9 @@ void execute_instruction(Process& p, uint64_t current_tick) {
 
     // Check if all instructions completed
     if (p.current_instruction >= p.instructions.size()) {
-        if (verboseMode)
+        if (verboseMode) 
             std::cout << "\n[Scheduler] Process " << p.name << " FINISHED." << std::endl;
-
+        
         p.state = ProcessState::FINISHED;
         return;  // Caller will move to finished_queue and reset core
     }
@@ -561,10 +689,10 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     if (ins.op == "PRINT") {
         // PRINT instruction can handle variable concatenation: PRINT ("Value from: " +x)
         // If no argument provided, use default message
-        std::string message = ins.args.empty()
-            ? "Hello world from " + p.name + "!"
+        std::string message = ins.args.empty() 
+            ? "Hello world from " + p.name + "!" 
             : ins.args[0];
-
+        
         // Process variable concatenation (+varname patterns)
         message = process_print_message(message, p);
         std::cout << "[" << p.name << "] " << message << std::endl;
@@ -605,6 +733,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
             const std::string& addrToken = ins.args[1];
             uint32_t addr = 0;
 
+            // Validate hex address and bounds
             if (!parse_hex_address(addrToken, addr) || addr >= p.memory_size) {
                 log_event(p, current_tick, "FAULT: invalid READ address " + addrToken);
                 if (verboseMode)
@@ -614,6 +743,21 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 return;
             }
 
+            // TODO: Uncomment when memory manager is ready
+            // // Memory Manager Integration Hook:
+            // // Check if the page containing this address is resident in physical memory
+            
+            // bool is_resident = MemoryManager::is_page_resident(p.id, addr);
+            // if (!is_resident) {
+            //     // Page fault - request page from disk
+            //     MemoryManager::request_page(p.id, addr);
+            //     // Do NOT execute instruction - process stalls
+            //     // Do NOT increment current_instruction
+            //     // Quantum should NOT be decremented (process is blocked)
+            //     return;
+            // }
+
+            // Execute the READ operation
             if (ensure_symbol_table_slot(p, varName)) {
                 uint16_t value = 0;
                 auto it = p.data_memory.find(addr);
@@ -634,6 +778,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
             const std::string& valueToken = ins.args[1];
             uint32_t addr = 0;
 
+            // Validate hex address and bounds
             if (!parse_hex_address(addrToken, addr) || addr >= p.memory_size) {
                 log_event(p, current_tick, "FAULT: invalid WRITE address " + addrToken);
                 if (verboseMode)
@@ -643,6 +788,21 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 return;
             }
 
+            // TODO: Uncomment when memory manager is ready
+            // Memory Manager Integration Hook:
+            // Check if the page containing this address is resident in physical memory
+            // 
+            // bool is_resident = MemoryManager::is_page_resident(p.id, addr);
+            // if (!is_resident) {
+            //     // Page fault - request page from disk
+            //     MemoryManager::request_page(p.id, addr);
+            //     // Do NOT execute instruction - process stalls
+            //     // Do NOT increment current_instruction
+            //     // Quantum should NOT be decremented (process is blocked)
+            //     return;
+            // }
+
+            // Execute the WRITE operation
             int raw = get_operand_value(valueToken, p);
             uint16_t value = static_cast<uint16_t>(clamp_to_uint16(raw));
             p.data_memory[addr] = value;
@@ -723,7 +883,6 @@ void execute_instruction(Process& p, uint64_t current_tick) {
     // Reset delay counter for next instruction (busy-wait per spec pg. 4)
     p.delay_ticks_left = config.delaysPerExec;
 }
-
 // ============================================================================
 // Scheduler main loop
 // ============================================================================
@@ -731,8 +890,15 @@ void execute_instruction(Process& p, uint64_t current_tick) {
 /**
  * @brief Main scheduler loop (runs in background thread)
  * 
- * Executes continuously after initialization. Handles process
- * generation, sleep transitions, CPU execution, and dispatching.
+ * Executes continuously after initialization:
+ * 1. Increment global_cpu_tick
+ * 2. Generate new process if is_generating_processes and time elapsed >= batchProcessFreq
+ * 3. Wake up sleeping processes (check_sleeping)
+ * 4. Execute one tick on all running processes (execute_cpu_tick)
+ * 5. Dispatch ready processes to idle cores (dispatch_processes)
+ * 6. Sleep 100ms (simulates CPU tick delay)
+ * 
+ * Only runs when isInitialized is true (guard exists for safety).
  */
 void scheduler_loop() {
     uint64_t last_generation_tick = 0;
@@ -742,22 +908,27 @@ void scheduler_loop() {
             // Increment global CPU tick
             global_cpu_tick++;
             uint64_t current_tick = global_cpu_tick.load();
-
-            // Track core utilization for reporting
+            
+            // Count how many CPU cores are actively running processes
+            // This is used for CPU utilization metrics
             int active_cores = 0;
             {
+                // Lock to safely access cpu_cores vector
                 std::lock_guard<std::mutex> lock(queue_mutex);
-                for (const auto& core : cpu_cores) {
+                for(const auto& core : cpu_cores) {
                     if (core.has_value()) {
                         active_cores++;
                     }
                 }
             }
             
+            // Update CPU utilization statistics
+            // total_active_ticks tracks sum of all core-ticks spent executing
+            // total_idle_ticks tracks sum of all core-ticks spent idle
             total_active_ticks += active_cores;
             total_idle_ticks += (config.numCPU - active_cores);
 
-            // Periodic process generation (scheduler-start)
+            // Periodic process generation
             if (is_generating_processes.load() &&
                 (current_tick - last_generation_tick >= config.batchProcessFreq))
             {
@@ -776,8 +947,15 @@ void scheduler_loop() {
     }
 }
 
+// ============================================================================
+// Public API
+// ============================================================================
+
 /**
- * @brief Start scheduler loop in a detached background thread
+ * @brief Start background scheduler thread
+ * 
+ * Spawns detached thread running scheduler_loop().
+ * Called once after successful initialization.
  */
 void start_scheduler_thread() {
     std::thread schedulerThread(scheduler_loop);
@@ -787,7 +965,7 @@ void start_scheduler_thread() {
 /**
  * @brief Enable periodic process generation
  * 
- * When enabled, generate_new_process() is called automatically
+ * Sets is_generating_processes flag. Processes are created
  * every batchProcessFreq ticks in scheduler_loop().
  */
 void start_process_generation() {
