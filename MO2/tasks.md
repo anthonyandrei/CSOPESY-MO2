@@ -103,24 +103,21 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 - [ ] Extend existing MO1 CLI parser (no re-implementation) with MO2 specifics:
     - [ ] `screen -s <name> <memsize>` (memsize must be power-of-two within [64, 65536] bytes)
     - [ ] `screen -c <name> <memsize> "<instructions>"` (1–50 semicolon-separated commands)
-    - [ ] `screen -ls`
     - [ ] `screen -r <name>` (update `screen -r` to show violation message below)
     - [ ] `process-smi`
     - [ ] `vmstat`
-- [ ] Screen sub-commands: `process-smi`, `exit`
 - [ ] Format outputs:
     - [ ] Aligned tables, headers refresh
     - [ ] `process-smi` header with total/used/free memory; per-process rows: PID | Name | State | RSS | Faults | PagesIn | PagesOut
     - [ ] `vmstat` table columns: total_mem | used_mem | free_mem | ticks_total | ticks_active | ticks_idle | pages_in | pages_out | procs_active
 - [ ] Handle error & status messages:
-    - [ ] Invalid command, memory allocation failure
+    - [ ] Invalid command
+    - [ ] memory allocation failure
     - [ ] Access violation termination notice with exact spec format:
         - [ ] `Process <name> shut down due to memory access violation error that occurred at <HH:MM:SS>. <Hex memory address> invalid.`
     - [ ] Process completion message
-- [ ] Testing scripts & scenario preparation
 - [ ] Deliverables preparation:
     - [X] README.txt
-    - [ ] Sample `config.txt`
     - [ ] PowerPoint technical report
     - [ ] Submission
 
