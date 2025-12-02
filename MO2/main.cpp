@@ -1,6 +1,13 @@
 /**
  * @file main.cpp
  * @brief Main CLI shell and command interpreter for CSOPESY OS Emulator
+ * 
+ * Provides:
+ * - Interactive command shell for system control
+ * - Configuration loading from config.txt
+ * - Process creation via screen commands
+ * - System statistics and monitoring
+ * - Integration with scheduler and memory manager
  */
 
 #include "config.h"
@@ -28,9 +35,9 @@ using namespace std;
 // ============================================================================
 // Global variables
 // ============================================================================
-Config config;
-bool isInitialized = false;
-bool verboseMode = true;
+Config config;              ///< System configuration loaded from config.txt
+bool isInitialized = false; ///< True after successful 'initialize' command
+bool verboseMode = true;    ///< Enable verbose logging output
 
 // ============================================================================
 // Utility helpers
@@ -38,6 +45,10 @@ bool verboseMode = true;
 
 /**
  * @brief Find process by name in all queues and CPU cores
+ * @param name Process name to search for
+ * @return Pointer to process if found, nullptr otherwise
+ * 
+ * Searches in order: ready_queue, sleeping_queue, cpu_cores, finished_queue
  */
 Process* find_process(const std::string& name) {
     for (auto& p : ready_queue)
@@ -57,7 +68,11 @@ Process* find_process(const std::string& name) {
 }
 
 /**
- * @brief Calculate CPU utilization
+ * @brief Calculate CPU utilization statistics
+ * @return Tuple of (cores_used, cores_available, utilization_percentage)
+ * 
+ * Counts how many CPU cores currently have running processes.
+ * Utilization = (cores_used / total_cores) * 100
  */
 tuple<int, int, double> calculate_cpu_utilization() {
     int used = 0;
@@ -73,7 +88,11 @@ tuple<int, int, double> calculate_cpu_utilization() {
 }
 
 /**
- * @brief Generate formatted process list
+ * @brief Generate formatted list of all processes with their states
+ * @return String containing process list (one per line)
+ * 
+ * Format: "processName [STATE]\n"
+ * States: READY, RUNNING, SLEEPING, FINISHED
  */
 string generate_process_list() {
     stringstream ss;
@@ -86,7 +105,8 @@ string generate_process_list() {
 }
 
 /**
- * @brief Trim leading spaces
+ * @brief Remove leading whitespace from string (in-place)
+ * @param s String to trim
  */
 void trimLeadingSpaces(string& s) {
     size_t i = 0;
@@ -95,7 +115,11 @@ void trimLeadingSpaces(string& s) {
 }
 
 /**
- * @brief Parse top-level command
+ * @brief Parse command line into command and remaining arguments
+ * @param input Full command line string
+ * @return Pair of (command, remaining_arguments)
+ * 
+ * Example: "screen -s myprocess" -> {"screen", "-s myprocess"}
  */
 pair<string, string> parseCommand(const string& input) {
     stringstream ss(input);
@@ -139,6 +163,24 @@ void showHelp() {
 // Config Loader
 // ============================================================================
 
+/**
+ * @brief Parse config.txt and populate global config struct
+ * @param file Input file stream (config.txt)
+ * 
+ * Reads key-value pairs from config file:
+ * - num-cpu <int>
+ * - scheduler <string>
+ * - quantum-cycles <uint32>
+ * - batch-process-freq <uint32>
+ * - min-ins <uint32>
+ * - max-ins <uint32>
+ * - delays-per-exec <uint32>
+ * - max-overall-mem <uint32>
+ * - mem-per-frame <uint32>
+ * - min-mem-per-proc <uint32>
+ * - max-mem-per-proc <uint32>
+ * - replacement-policy <string>
+ */
 void initializeConfig(ifstream& file) {
     string key;
     while (file >> key) {
@@ -150,17 +192,32 @@ void initializeConfig(ifstream& file) {
         else if (key == "max-ins")         file >> config.maxIns;
         else if (key == "delays-per-exec") file >> config.delaysPerExec;
 
-        // added memory configs -lmrc
+        // Memory configuration
         else if (key == "max-overall-mem") file >> config.maxOverallMem;
         else if (key == "mem-per-frame")   file >> config.memPerFrame;
         else if (key == "min-mem-per-proc") file >> config.minMemPerProc;
         else if (key == "max-mem-per-proc") file >> config.maxMemPerProc;
+        else if (key == "replacement-policy") file >> config.replacementPolicy;
         else {
+            // Unknown key - skip value
             string dummy;
             file >> dummy;
         }
     }
 }
+
+/**
+ * @brief Validate loaded configuration values
+ * @param cfg Configuration to validate
+ * @return true if config is valid, false otherwise
+ * 
+ * Checks:
+ * - numCPU >= 1
+ * - scheduler is "fcfs" or "rr"
+ * - quantumCycles >= 1
+ * - batchProcessFreq >= 1
+ * - minIns >= 1 and maxIns >= minIns
+ */
 
 bool isValidConfig(const Config& cfg) {
     if (cfg.numCPU < 1) return false;
@@ -171,6 +228,14 @@ bool isValidConfig(const Config& cfg) {
     return true;
 }
 
+/**
+ * @brief Check if a number is a power of two
+ * @param x Number to check
+ * @return true if x is a power of 2, false otherwise
+ * 
+ * Uses bit manipulation: powers of 2 have only one bit set.
+ * Example: 8 (1000) & 7 (0111) = 0
+ */
 bool isPowerOfTwo(uint32_t x) {
     return x && !(x & (x - 1));
 }

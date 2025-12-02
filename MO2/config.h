@@ -23,6 +23,10 @@
  * - minIns: [1, 2^32]
  * - maxIns: [minIns, 2^32]
  * - delaysPerExec: [0, 2^32]
+ * - maxOverallMem: total physical memory (bytes)
+ * - memPerFrame: page/frame size (bytes, must be power of 2)
+ * - minMemPerProc, maxMemPerProc: process memory bounds (bytes)
+ * - replacementPolicy: "fifo" or "lru"
  */
 struct Config {
     int numCPU = 0;                     ///< Number of CPU cores (1-128)
@@ -33,8 +37,9 @@ struct Config {
     uint32_t maxIns = 0;                ///< Maximum instructions per process
     uint32_t delaysPerExec = 0;         ///< Busy-wait delay per instruction (CPU ticks)
 
-    uint32_t maxOverallMem = 0;//max memory bytes
-    uint32_t memPerFrame = 0;//size of one frame
-    uint32_t minMemPerProc = 0;//min memory of process
-    uint32_t maxMemPerProc = 0;//max memory ofprocess
+    uint32_t maxOverallMem = 0;         ///< Total physical memory in bytes
+    uint32_t memPerFrame = 0;           ///< Frame/page size in bytes (power of 2)
+    uint32_t minMemPerProc = 0;         ///< Minimum process memory allocation (bytes)
+    uint32_t maxMemPerProc = 0;         ///< Maximum process memory allocation (bytes)
+    std::string replacementPolicy = "fifo"; ///< Page replacement: "fifo" or "lru"
 };

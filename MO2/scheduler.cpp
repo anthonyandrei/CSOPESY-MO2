@@ -5,6 +5,7 @@
 
 #include "scheduler.h"
 #include "config.h"
+#include "memory_manager.h"
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -576,15 +577,14 @@ void execute_cpu_tick() {
         if (cpu_cores[i].has_value()) {
             Process& p = *cpu_cores[i];
 
-            // TODO: Uncomment when memory manager is ready
-            
-            // bool is_resident = is_page_resident(p.id, p.current_instruction); 
-            // if (!is_resident) {
-            //     request_page(p.id, p.current_instruction);
-            //     // Do NOT execute instruction.
-            //     // Do NOT decrement quantum (stalling).
-            //     continue; 
-            // }
+            // MemoryManager integration (page residency check)
+            bool is_resident = MemoryManager::getInstance().isPageResident(p.id, p.current_instruction);
+            if (!is_resident) {
+                MemoryManager::getInstance().requestPage(p.id, p.current_instruction);
+                // Do NOT execute instruction.
+                // Do NOT decrement quantum (stalling).
+                continue;
+            }
 
             // Execute one instruction
             execute_instruction(p, current_tick);
@@ -743,19 +743,18 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 return;
             }
 
-            // TODO: Uncomment when memory manager is ready
-            // // Memory Manager Integration Hook:
-            // // Check if the page containing this address is resident in physical memory
-            
-            // bool is_resident = MemoryManager::is_page_resident(p.id, addr);
-            // if (!is_resident) {
-            //     // Page fault - request page from disk
-            //     MemoryManager::request_page(p.id, addr);
-            //     // Do NOT execute instruction - process stalls
-            //     // Do NOT increment current_instruction
-            //     // Quantum should NOT be decremented (process is blocked)
-            //     return;
-            // }
+            // Memory Manager Integration Hook: check page residency
+            {
+                bool is_resident = MemoryManager::getInstance().isPageResident(p.id, addr);
+                if (!is_resident) {
+                    // Page fault - request page from disk and stall
+                    MemoryManager::getInstance().requestPage(p.id, addr);
+                    // Do NOT execute instruction - process stalls
+                    // Do NOT increment current_instruction
+                    // Quantum should NOT be decremented (process is blocked)
+                    return;
+                }
+            }
 
             // Execute the READ operation
             if (ensure_symbol_table_slot(p, varName)) {
@@ -788,19 +787,18 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 return;
             }
 
-            // TODO: Uncomment when memory manager is ready
-            // Memory Manager Integration Hook:
-            // Check if the page containing this address is resident in physical memory
-            // 
-            // bool is_resident = MemoryManager::is_page_resident(p.id, addr);
-            // if (!is_resident) {
-            //     // Page fault - request page from disk
-            //     MemoryManager::request_page(p.id, addr);
-            //     // Do NOT execute instruction - process stalls
-            //     // Do NOT increment current_instruction
-            //     // Quantum should NOT be decremented (process is blocked)
-            //     return;
-            // }
+            // Memory Manager Integration Hook: check page residency
+            {
+                bool is_resident = MemoryManager::getInstance().isPageResident(p.id, addr);
+                if (!is_resident) {
+                    // Page fault - request page from disk and stall
+                    MemoryManager::getInstance().requestPage(p.id, addr);
+                    // Do NOT execute instruction - process stalls
+                    // Do NOT increment current_instruction
+                    // Quantum should NOT be decremented (process is blocked)
+                    return;
+                }
+            }
 
             // Execute the WRITE operation
             int raw = get_operand_value(valueToken, p);
