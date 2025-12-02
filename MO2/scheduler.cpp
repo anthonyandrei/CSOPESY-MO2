@@ -400,13 +400,20 @@ void generate_new_process() {
     int pid = next_process_id++;
     std::string pname = generate_process_name(pid);
 
+    // Calculate random memory size for the process (specs pg. 5)
+    uint32_t mem_size = random_in_range(config.minMemPerProc, config.maxMemPerProc);
+
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
-                  << " (" << num_instructions << " instructions)." << std::endl;
+                  << " (" << num_instructions << " instructions, "
+                  << mem_size << " bytes memory)." << std::endl;
     }
 
-    // Create process and reserve memory
-    Process p(pid, pname, num_instructions);
+    // Create process with allocated memory size
+    Process p(pid, pname, num_instructions, mem_size);
+
+    // Notify Memory Manager to initialize page table for this process
+    MemoryManager::getInstance().allocateMemory(pid, mem_size);
 
     // Prepopulate some variables for use in instructions
     std::vector<std::string> var_pool = { "x", "y", "z", "counter" };
