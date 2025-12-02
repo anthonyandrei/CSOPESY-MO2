@@ -18,6 +18,9 @@
 #include <unordered_map>
 #include <cstdint>
 
+extern std::atomic<uint64_t> total_active_ticks; 
+extern std::atomic<uint64_t> total_idle_ticks;
+
 /**
  * @enum ProcessState
  * @brief Lifecycle states of a process

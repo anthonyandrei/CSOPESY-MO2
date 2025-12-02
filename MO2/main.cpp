@@ -472,7 +472,6 @@ void handleProcessSMI() {
 
     cout << left << setw(6) << "PID"
         << setw(20) << "NAME"
-        << setw(12) << "STATE"
         << setw(14) << "VM-SIZE"
         << setw(14) << "RSS"
         << "\n";
@@ -499,6 +498,51 @@ void handleProcessSMI() {
     for(const auto& p : finished_queue) print_proc(p);
 
     cout << "\n";
+}
+
+// ============================================================================
+// vmstat implementation
+// ============================================================================
+
+/**
+ * @brief Handle vmstat command - detailed memory / CPU / paging stats
+ *
+ * Prints:
+ * - Total memory (bytes)
+ * - Used memory (bytes)
+ * - Free memory (bytes)
+ * - Idle cpu ticks
+ * - Active cpu ticks
+ * - Total cpu ticks (sum of active + idle)
+ * - Num paged in
+ * - Num paged out
+ */
+void handleVMStat() {
+    auto& mm = MemoryManager::getInstance();
+
+    size_t totalMem = mm.getTotalMemory();
+    size_t usedMem = mm.getUsedMemory();
+    size_t freeMem = mm.getFreeMemory();
+
+    uint64_t idleTicks = total_idle_ticks.load();
+    uint64_t activeTicks = total_active_ticks.load();
+    uint64_t totalCoreTicks = idleTicks + activeTicks;
+
+    uint64_t pagedIn = mm.getNumPagedIn();
+    uint64_t pagedOut = mm.getNumPagedOut();
+
+    cout << "VMSTAT\n";
+    cout << "------\n";
+    cout << "Total memory   : " << totalMem << " bytes (" << formatBytes(totalMem) << ")\n";
+    cout << "Used memory    : " << usedMem << " bytes (" << formatBytes(usedMem) << ")\n";
+    cout << "Free memory    : " << freeMem << " bytes (" << formatBytes(freeMem) << ")\n\n";
+
+    cout << "Idle cpu ticks : " << idleTicks << "\n";
+    cout << "Active cpu ticks: " << activeTicks << "\n";
+    cout << "Total cpu ticks : " << totalCoreTicks << "\n\n";
+
+    cout << "Num paged in   : " << pagedIn << "\n";
+    cout << "Num paged out  : " << pagedOut << "\n\n";
 }
 
 // ============================================================================
@@ -544,7 +588,7 @@ void handleCommand(const string& cmd, const string& rest, bool& running) {
     else if(cmd == "process-smi") {
         handleProcessSMI();
     } else if(cmd == "vmstat") {
-    
+        handleVMStat();
     } else cout << "Unknown command\n";
 }
 
