@@ -21,6 +21,8 @@
 #include <cstdlib>
 #include <ctime>
 
+#include "memory_manager.h"
+
 using namespace std;
 
 // ============================================================================
@@ -147,6 +149,12 @@ void initializeConfig(ifstream& file) {
         else if (key == "min-ins")         file >> config.minIns;
         else if (key == "max-ins")         file >> config.maxIns;
         else if (key == "delays-per-exec") file >> config.delaysPerExec;
+
+        // added memory configs -lmrc
+        else if (key == "max-overall-mem") file >> config.maxOverallMem;
+        else if (key == "mem-per-frame")   file >> config.memPerFrame;
+        else if (key == "min-mem-per-proc") file >> config.minMemPerProc;
+        else if (key == "max-mem-per-proc") file >> config.maxMemPerProc;
         else {
             string dummy;
             file >> dummy;
@@ -375,6 +383,8 @@ void handleCommand(const string& cmd, const string& rest, bool& running) {
             cout << "Invalid config\n";
             return;
         }
+
+        MemoryManager::getInstance().initialize();
 
         isInitialized = true;
         cpu_cores.resize(config.numCPU);

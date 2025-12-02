@@ -32,4 +32,9 @@ struct Config {
     uint32_t minIns = 0;                ///< Minimum instructions per process
     uint32_t maxIns = 0;                ///< Maximum instructions per process
     uint32_t delaysPerExec = 0;         ///< Busy-wait delay per instruction (CPU ticks)
+
+    uint32_t maxOverallMem = 0;//max memory bytes
+    uint32_t memPerFrame = 0;//size of one frame
+    uint32_t minMemPerProc = 0;//min memory of process
+    uint32_t maxMemPerProc = 0;//max memory ofprocess
 };
