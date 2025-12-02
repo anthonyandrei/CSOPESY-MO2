@@ -29,10 +29,10 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ### Deliverables
 
--   `memory_manager.*` (API + implementation)
--   Working page fault + replacement flow under load
--   Backing store lifecycle documented
--   Metrics accessible for reporting
+-   [X] `memory_manager.*` (API + implementation)
+-   [X] Working page fault + replacement flow under load
+-   [X] Backing store lifecycle documented
+-   [X] Metrics accessible for reporting
 
 ---
 
@@ -61,10 +61,10 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ### Deliverables
 
--   `process.*` (PCB + instruction engine)
--   Parser for custom process scripts
--   Execution logic that defers on page faults
--   Updated symbol table management & size enforcement
+-   [X] `process.*` (PCB + instruction engine)
+-   [X] Parser for custom process scripts
+-   [X] Execution logic that defers on page faults
+-   [X] Updated symbol table management & size enforcement
 
 ---
 
@@ -74,24 +74,23 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 
 ### Responsibilities
 
--   [X] Reuse MO1 FCFS/RR scheduler core; read `scheduler` and `quantum-cycles` from config
--   [X] Only dispatch instructions if required page is resident (else trigger fault path)
--   [X] Stall/retry semantics on page fault
--   [X] Handle SLEEP instructions & wake-ups
--   [X] Manage queues: READY, SLEEPING, FINISHED, MEMORY-VIOLATED
--   [X] Global CPU tick counter & per-tick execution loop
--   [X] Track metrics:
+-   Reuse MO1 FCFS/RR scheduler core; read `scheduler` and `quantum-cycles` from config
+-   Only dispatch instructions if required page is resident (else trigger fault path)
+-   Stall/retry semantics on page fault
+-   Handle SLEEP instructions & wake-ups
+-   Manage queues: READY, SLEEPING, FINISHED, MEMORY-VIOLATED
+-   Global CPU tick counter & per-tick execution loop
+-   Track metrics:
     -   Total ticks, idle ticks, active ticks
     -   Pages in/out (query Memory Manager)
--   [X] Batch process generation (`scheduler-start`) including READ/WRITE in generated scripts respecting `min-ins`/`max-ins`
--   [X] Respect `delays-per-exec` as busy-wait (process holds CPU during delay)
-
+-   Batch process generation (`scheduler-start`) including READ/WRITE in generated scripts respecting `min-ins`/`max-ins`
+-   Respect `delays-per-exec` as busy-wait (process holds CPU during delay)
 ### Deliverables
 
--   `scheduler.*` with tick loop & queue logic
--   Correct preemption (RR) & sequential dispatch (FCFS)
--   Accurate tick counters & idle vs active time
--   Verified stress scenario with multiple generated processes
+-   [X] `scheduler.*` with tick loop & queue logic
+-   [X] Correct preemption (RR) & sequential dispatch (FCFS)
+-   [X] Accurate tick counters & idle vs active time
+-   [X] Verified stress scenario with multiple generated processes
 
 ---
 
