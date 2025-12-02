@@ -152,6 +152,8 @@ void showHelp() {
     cout << "scheduler-start\n";
     cout << "scheduler-stop\n";
     cout << "report-util\n";
+    std::cout << "process-smi\n";
+    std::cout << "vmstat\n";
     cout << "exit\n\n";
 
     cout << "Inside screen:\n";
@@ -423,6 +425,83 @@ void handleReportUtil() {
 }
 
 // ============================================================================
+// process-smi (main menu)
+// ============================================================================
+
+static std::string formatBytes(size_t bytes) {
+    const double b = static_cast<double>(bytes);
+    const double KB = 1024.0;
+    const double MB = KB * 1024.0;
+    const double GB = MB * 1024.0;
+
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(2);
+    if(b >= GB) ss << (b / GB) << " GB";
+    else if(b >= MB) ss << (b / MB) << " MB";
+    else if(b >= KB) ss << (b / KB) << " KB";
+    else ss << b << " B";
+    return ss.str();
+}
+
+/**
+ * @brief Handle top-level process-smi command
+ *
+ * Prints:
+ * - Memory summary (total/used/free)
+ * - CPU utilization
+ * - Per-process listing with PID, name, VM size, RSS (resident) bytes
+ */
+void handleProcessSMI() {
+    auto& mm = MemoryManager::getInstance();
+
+    size_t totalMem = mm.getTotalMemory();
+    size_t usedMem = mm.getUsedMemory();
+    size_t freeMem = mm.getFreeMemory();
+
+    auto [usedCores, availCores, util] = calculate_cpu_utilization();
+
+    cout << "PROCESS-SMI\n";
+    cout << "-----------\n";
+    cout << "CPU Utilization: " << fixed << setprecision(2) << util << "% ("
+        << usedCores << " used, " << availCores << " available)\n\n";
+
+    cout << "Memory Summary:\n";
+    cout << "  Total: " << formatBytes(totalMem) << "\n";
+    cout << "  Used : " << formatBytes(usedMem) << "\n";
+    cout << "  Free : " << formatBytes(freeMem) << "\n\n";
+
+    cout << left << setw(6) << "PID"
+        << setw(20) << "NAME"
+        << setw(12) << "STATE"
+        << setw(14) << "VM-SIZE"
+        << setw(14) << "RSS"
+        << "\n";
+    cout << string(66, '-') << "\n";
+
+    lock_guard<mutex> lock(queue_mutex);
+
+    // Print process details (id, name, state, 
+    auto print_proc = [&](const Process& p) {
+        size_t vm = p.memory_size;
+        size_t rss = mm.getProcessRSS(p.id);
+        cout << left << setw(6) << p.id
+            << setw(20) << p.name
+            << setw(14) << formatBytes(vm)
+            << setw(14) << formatBytes(rss)
+            << "\n";
+        };
+
+    for(const auto& p : ready_queue) print_proc(p);
+    for(const auto& opt : cpu_cores) {
+        if(opt.has_value()) print_proc(opt.value());
+    }
+    for(const auto& p : sleeping_queue) print_proc(p);
+    for(const auto& p : finished_queue) print_proc(p);
+
+    cout << "\n";
+}
+
+// ============================================================================
 // Command Dispatcher
 // ============================================================================
 
@@ -462,7 +541,11 @@ void handleCommand(const string& cmd, const string& rest, bool& running) {
     else if (cmd == "scheduler-start") start_process_generation();
     else if (cmd == "scheduler-stop") stop_process_generation();
     else if (cmd == "report-util") handleReportUtil();
-    else cout << "Unknown command\n";
+    else if(cmd == "process-smi") {
+        handleProcessSMI();
+    } else if(cmd == "vmstat") {
+    
+    } else cout << "Unknown command\n";
 }
 
 // ============================================================================
