@@ -80,7 +80,7 @@ struct Process {
     uint32_t current_instruction;        ///< Current instruction index
     uint32_t quantum_ticks_left;         ///< Remaining RR quantum
     uint32_t delay_ticks_left;           ///< Execution delay ticks
-
+    bool is_waiting;                     ///< True if waiting for page fault (not executing)
 
     uint32_t memory_size;                ///< Total process memory (bytes)
     uint32_t symbol_table_bytes_used;    ///< Bytes used in symbol table (max 64)
@@ -111,6 +111,7 @@ struct Process {
           current_instruction(0),
           quantum_ticks_left(0),
           delay_ticks_left(0),
+          is_waiting(false),
           memory_size(mem_size),
           symbol_table_bytes_used(0) {}
 };

@@ -584,9 +584,14 @@ void execute_cpu_tick() {
         if (cpu_cores[i].has_value()) {
             Process& p = *cpu_cores[i];
 
+            // Reset waiting flag at start of tick (assume process can execute)
+            p.is_waiting = false;
+
             // MemoryManager integration (page residency check)
             bool is_resident = MemoryManager::getInstance().isPageResident(p.id, p.current_instruction);
             if (!is_resident) {
+                // Page fault - process is waiting for I/O, not executing
+                p.is_waiting = true;
                 MemoryManager::getInstance().requestPage(p.id, p.current_instruction);
                 // Do NOT execute instruction.
                 // Do NOT decrement quantum (stalling).
@@ -755,6 +760,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 bool is_resident = MemoryManager::getInstance().isPageResident(p.id, addr);
                 if (!is_resident) {
                     // Page fault - request page from disk and stall
+                    p.is_waiting = true;  // Mark process as waiting (not executing)
                     MemoryManager::getInstance().requestPage(p.id, addr);
                     // Do NOT execute instruction - process stalls
                     // Do NOT increment current_instruction
@@ -799,6 +805,7 @@ void execute_instruction(Process& p, uint64_t current_tick) {
                 bool is_resident = MemoryManager::getInstance().isPageResident(p.id, addr);
                 if (!is_resident) {
                     // Page fault - request page from disk and stall
+                    p.is_waiting = true;  // Mark process as waiting (not executing)
                     MemoryManager::getInstance().requestPage(p.id, addr);
                     // Do NOT execute instruction - process stalls
                     // Do NOT increment current_instruction
@@ -914,22 +921,23 @@ void scheduler_loop() {
             global_cpu_tick++;
             uint64_t current_tick = global_cpu_tick.load();
             
-            // Count how many CPU cores are actively running processes
+            // Count how many CPU cores are actively executing (not paging)
             // This is used for CPU utilization metrics
             int active_cores = 0;
             {
                 // Lock to safely access cpu_cores vector
                 std::lock_guard<std::mutex> lock(queue_mutex);
                 for(const auto& core : cpu_cores) {
-                    if (core.has_value()) {
+                    // Only count cores that have a process AND are not waiting for I/O
+                    if (core.has_value() && !core->is_waiting) {
                         active_cores++;
                     }
                 }
             }
             
             // Update CPU utilization statistics
-            // total_active_ticks tracks sum of all core-ticks spent executing
-            // total_idle_ticks tracks sum of all core-ticks spent idle
+            // total_active_ticks tracks sum of all core-ticks spent executing instructions
+            // total_idle_ticks tracks sum of all core-ticks spent idle or waiting for I/O
             total_active_ticks += active_cores;
             total_idle_ticks += (config.numCPU - active_cores);
 
