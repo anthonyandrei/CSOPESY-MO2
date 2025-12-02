@@ -71,13 +71,21 @@ Process* find_process(const std::string& name) {
  * @brief Calculate CPU utilization statistics
  * @return Tuple of (cores_used, cores_available, utilization_percentage)
  * 
- * Counts how many CPU cores currently have running processes.
- * Utilization = (cores_used / total_cores) * 100
+ * Counts how many CPU cores are actively executing instructions.
+ * Processes waiting for page faults (is_waiting == true) are NOT counted as active.
+ * Utilization = (cores_executing / total_cores) * 100
  */
 tuple<int, int, double> calculate_cpu_utilization() {
+    // Thread safety: cpu_cores is shared with scheduler thread
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    
     int used = 0;
-    for (auto& c : cpu_cores)
-        if (c.has_value()) used++;
+    for (auto& c : cpu_cores) {
+        // Only count cores that have a process AND are not waiting for I/O
+        if (c.has_value() && !c->is_waiting) {
+            used++;
+        }
+    }
 
     int available = static_cast<int>(cpu_cores.size()) - used;
     double utilization = cpu_cores.empty()
