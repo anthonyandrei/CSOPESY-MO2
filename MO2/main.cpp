@@ -145,7 +145,7 @@ void showHelp() {
     cout << "\nAvailable Commands\n";
     cout << "------------------\n";
     cout << "initialize\n";
-    cout << "screen -s <name>\n";
+    cout << "screen -s <name> <memsize>\n";
     cout << "screen -c <name> <memsize> \"<instructions>\"\n";
     cout << "screen -r <name>\n";
     cout << "screen -ls\n";
@@ -251,31 +251,51 @@ void handleScreenCommand(const string& param) {
 
     // ------------------------------------------------------------------------
     // screen -s (auto-generated instructions)
+    // Syntax: screen -s <name> <memsize>
     // ------------------------------------------------------------------------
-    if (sub == "-s") {
-        Process p(next_process_id++, rest, 5);
+    if(sub == "-s") {
+        string pname;
+        uint32_t memsize = 0;
+
+        stringstream ss(rest);
+        ss >> pname >> memsize;
+
+        if(!ss || pname.empty() || memsize < 64 || memsize > 65536 || !isPowerOfTwo(memsize)) {
+            cout << "invalid memory allocation\n";
+            return;
+        }
+
+        int pid = next_process_id++;
+        Process p(pid, pname, 5, memsize);
         p.instructions = {
             { "DECLARE", { "x", "0" } },
             { "ADD", { "x", "x", "1" } },
             { "PRINT", { "x = +x" } }
         };
 
+        // Ask MemoryManager to create page table for this process
+        if(!MemoryManager::getInstance().allocateMemory(pid, memsize)) {
+            cout << "memory allocation failed\n";
+            return;
+        }
+
         lock_guard<mutex> lock(queue_mutex);
         ready_queue.push_back(move(p));
-        cout << "Process " << rest << " created.\n";
+        cout << "Process " << pname << " created.\n";
     }
 
     // ------------------------------------------------------------------------
     // screen -c (user-defined instructions)
+    // Syntax: screen -c <name> <memsize> "<instructions>"
     // ------------------------------------------------------------------------
-    else if (sub == "-c") {
+    else if(sub == "-c") {
         string pname;
-        uint32_t memsize;
+        uint32_t memsize = 0;
 
         stringstream ss(rest);
         ss >> pname >> memsize;
 
-        if (!ss || memsize < 64 || memsize > 65536 || !isPowerOfTwo(memsize)) {
+        if(!ss || pname.empty() || memsize < 64 || memsize > 65536 || !isPowerOfTwo(memsize)) {
             cout << "invalid memory allocation\n";
             return;
         }
@@ -284,7 +304,7 @@ void handleScreenCommand(const string& param) {
         getline(ss, code);
         trimLeadingSpaces(code);
 
-        if (code.size() < 2 || code.front() != '"' || code.back() != '"') {
+        if(code.size() < 2 || code.front() != '"' || code.back() != '"') {
             cout << "invalid command\n";
             return;
         }
@@ -294,18 +314,18 @@ void handleScreenCommand(const string& param) {
         vector<string> lines;
         string temp;
         stringstream cs(code);
-        while (getline(cs, temp, ';')) {
+        while(getline(cs, temp, ';')) {
             trimLeadingSpaces(temp);
-            if (!temp.empty()) lines.push_back(temp);
+            if(!temp.empty()) lines.push_back(temp);
         }
 
-        if (lines.empty() || lines.size() > 50) {
+        if(lines.empty() || lines.size() > 50) {
             cout << "invalid command\n";
             return;
         }
 
         vector<Instruction> instructions;
-        for (const auto& line : lines) {
+        for(const auto& line : lines) {
             string op, restOp;
             stringstream ls(line);
             ls >> op;
@@ -315,25 +335,26 @@ void handleScreenCommand(const string& param) {
             Instruction ins;
             ins.op = op;
 
-            if (op == "PRINT") {
+            if(op == "PRINT") {
                 ins.args.push_back(restOp);
-            } else {
+            }
+            else {
                 string arg;
                 stringstream as(restOp);
-                while (as >> arg) ins.args.push_back(arg);
+                while(as >> arg) ins.args.push_back(arg);
             }
 
             // minimal operand validation
             bool valid = true;
-            if (op == "DECLARE") valid = (ins.args.size() == 2);
-            else if (op == "ADD" || op == "SUBTRACT") valid = (ins.args.size() == 3);
-            else if (op == "SLEEP") valid = (ins.args.size() == 1);
-            else if (op == "FOR") valid = (ins.args.size() == 2);
-            else if (op == "READ" || op == "WRITE") valid = (ins.args.size() == 2);
-            else if (op == "PRINT") valid = true;
+            if(op == "DECLARE") valid = (ins.args.size() == 2);
+            else if(op == "ADD" || op == "SUBTRACT") valid = (ins.args.size() == 3);
+            else if(op == "SLEEP") valid = (ins.args.size() == 1);
+            else if(op == "FOR") valid = (ins.args.size() == 2);
+            else if(op == "READ" || op == "WRITE") valid = (ins.args.size() == 2);
+            else if(op == "PRINT") valid = true;
             else valid = false;
 
-            if (!valid) {
+            if(!valid) {
                 cout << "invalid command\n";
                 return;
             }
@@ -341,10 +362,17 @@ void handleScreenCommand(const string& param) {
             instructions.push_back(ins);
         }
 
-        Process p(next_process_id++, pname,
-                  static_cast<uint32_t>(instructions.size()),
-                  memsize);
+        int pid = next_process_id++;
+        Process p(pid, pname,
+            static_cast<uint32_t>(instructions.size()),
+            memsize);
         p.instructions = move(instructions);
+
+        // Initialize memory for the process
+        if(!MemoryManager::getInstance().allocateMemory(pid, memsize)) {
+            cout << "memory allocation failed\n";
+            return;
+        }
 
         lock_guard<mutex> lock(queue_mutex);
         ready_queue.push_back(move(p));
@@ -355,47 +383,61 @@ void handleScreenCommand(const string& param) {
     // ------------------------------------------------------------------------
     // screen -r (attach)
     // ------------------------------------------------------------------------
-    else if (sub == "-r") {
+    else if(sub == "-r") {
         lock_guard<mutex> lock(queue_mutex);
         Process* p = find_process(rest);
 
-        if (!p) {
+        if(!p) {
             cout << "process not found\n";
             return;
         }
 
         cout << "Attached to " << p->name << "\n";
         string cmd;
-        while (true) {
+        while(true) {
             cout << p->name << "> ";
             getline(cin, cmd);
 
-            if (cmd == "process-smi") {
+            if(cmd == "process-smi") {
                 cout << "PID: " << p->id << "\n";
                 cout << "State: ";
 
-                if (p->state == ProcessState::READY) cout << "READY\n";
-                else if (p->state == ProcessState::RUNNING) cout << "RUNNING\n";
-                else if (p->state == ProcessState::SLEEPING) cout << "SLEEPING\n";
-                else if (p->state == ProcessState::FINISHED) cout << "FINISHED\n";
-                else if (p->state == ProcessState::MEMORY_VIOLATED) cout << "MEMORY-VIOLATED\n";
+                if(p->state == ProcessState::READY) cout << "READY\n";
+                else if(p->state == ProcessState::RUNNING) cout << "RUNNING\n";
+                else if(p->state == ProcessState::SLEEPING) cout << "SLEEPING\n";
+                else if(p->state == ProcessState::FINISHED) cout << "FINISHED\n";
+                else if(p->state == ProcessState::MEMORY_VIOLATED) cout << "MEMORY-VIOLATED\n";
 
                 cout << "Instruction: " << p->current_instruction
-                     << "/" << p->total_instructions << "\n";
+                    << "/" << p->total_instructions << "\n";
 
                 cout << "\nVariables:\n";
-                for (auto& kv : p->memory)
+                for(auto& kv : p->memory)
                     cout << "  " << kv.first << " = " << kv.second << "\n";
 
                 cout << "\nExecution log:\n";
                 int shown = 0;
-                for (auto it = p->exec_log.rbegin();
-                     it != p->exec_log.rend() && shown < 10;
-                     ++it, ++shown) {
+                for(auto it = p->exec_log.rbegin();
+                    it != p->exec_log.rend() && shown < 10;
+                    ++it, ++shown) {
                     cout << "  " << *it << "\n";
                 }
+
+                // If process experienced a memory violation, show the relevant message below
+                if(p->state == ProcessState::MEMORY_VIOLATED) {
+                    string violationMsg = "Memory violation occurred.";
+                    // Prefer latest FAULT entry if available
+                    for(auto it = p->exec_log.rbegin(); it != p->exec_log.rend(); ++it) {
+                        if(it->find("FAULT:") != string::npos || it->find("FAULT") != string::npos ||
+                            it->find("MEMORY") != string::npos) {
+                            violationMsg = *it;
+                            break;
+                        }
+                    }
+                    cout << "\nViolation:\n  " << violationMsg << "\n";
+                }
             }
-            else if (cmd == "exit") break;
+            else if(cmd == "exit") break;
         }
     }
 
