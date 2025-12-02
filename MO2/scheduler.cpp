@@ -403,6 +403,17 @@ void generate_new_process() {
     // Calculate random memory size for the process (specs pg. 5)
     uint32_t mem_size = random_in_range(config.minMemPerProc, config.maxMemPerProc);
 
+    // Admission Control: Reject processes that exceed system memory capacity
+    if (mem_size > config.maxOverallMem) {
+        if (verboseMode) {
+            std::cout << "\n[Scheduler] Process " << pname 
+                      << " requires " << mem_size << " bytes"
+                      << " (System max: " << config.maxOverallMem << " bytes)."
+                      << " Admission DENIED.\n";
+        }
+        return; // Do not add to ready_queue
+    }
+
     if (verboseMode) {
         std::cout << "\n[Scheduler] Generating process " << pname
                   << " (" << num_instructions << " instructions, "
