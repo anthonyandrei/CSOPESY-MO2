@@ -11,13 +11,13 @@
 
 ### Prerequisites
 
-- Windows
-- Visual Studio 2022 with C++ Desktop development workload
+- Windows 11
+- Visual Studio 2022/2026 with C++ Desktop development workload
 
 ### Build and Run
 
 1. Clone GitHub repository
-2. Open CSOPESY-MO1.sln
+2. Open MO1.slnx
 3. Click Local Windows Debugger in Visual Studio
 
 ## Authors
