@@ -68,7 +68,7 @@ void MemoryManager::deallocateMemory(int pid) {
 }
 
 int MemoryManager::getPageFromAddress(uint32_t addr) {
-    // Simple division to get page number from virtual address
+    if (config.memPerFrame == 0) return 0;  // Guard against invalid config
     return addr / config.memPerFrame;
 }
 
