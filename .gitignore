@@ -498,3 +498,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# Visual Studio temp folder
+enc_temp_folder

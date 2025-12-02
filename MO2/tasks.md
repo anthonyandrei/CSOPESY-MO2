@@ -103,10 +103,8 @@ Assumptions: MO1 is complete (CLI shell + `initialize` + config parsing, FCFS/RR
 - [ ] Extend existing MO1 CLI parser (no re-implementation) with MO2 specifics:
     - [ ] `screen -s <name> <memsize>` (memsize must be power-of-two within [64, 65536] bytes)
     - [ ] `screen -c <name> <memsize> "<instructions>"` (1–50 semicolon-separated commands)
-    - [ ] `screen -ls`, `screen -r <name>` (update `screen -r` to show violation message below)
-    - [ ] `scheduler-start`
-    - [ ] `scheduler-stop`
-    - [ ] `report-util`
+    - [ ] `screen -ls`
+    - [ ] `screen -r <name>` (update `screen -r` to show violation message below)
     - [ ] `process-smi`
     - [ ] `vmstat`
 - [ ] Screen sub-commands: `process-smi`, `exit`
